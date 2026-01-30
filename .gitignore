@@ -70,8 +70,9 @@ ipython_config.py
 *.swo
 *~
 
-# Claude Code
-.claude/
+# Claude Code (ignore all except project commands)
+.claude/*
+!.claude/commands/
 
 # Local development
 Untitled*.ipynb
