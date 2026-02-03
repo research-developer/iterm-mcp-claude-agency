@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Git prepare-commit-msg hook to capture iTerm session ID.
+
+This hook runs after the commit message is prepared but before the editor is opened.
+It captures the current iTerm session ID and stores it as git notes metadata.
+
+The hook operates in two stages:
+1. During commit preparation: Captures session ID from environment
+2. After commit: Stores session metadata in git notes
+
+Installation:
+    Copy this file to .git/hooks/prepare-commit-msg and make it executable:
+    $ cp scripts/prepare-commit-msg .git/hooks/
+    $ chmod +x .git/hooks/prepare-commit-msg
+
+Usage:
+    The hook runs automatically during `git commit`. No user action needed.
+    Session metadata is stored in git notes under refs/notes/iterm-session.
+
+Querying session data:
+    $ git notes --ref=refs/notes/iterm-session show <commit-sha>
+"""
+
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def get_session_id_from_env() -> str | None:
+    """Get iTerm session ID from environment variable.
+    
+    iTerm2 sets ITERM_SESSION_ID in the environment of shell sessions.
+    This is the most reliable way to get the session ID in a git hook.
+    
+    Returns:
+        Session ID if available, None otherwise
+    """
+    return os.environ.get("ITERM_SESSION_ID")
+
+
+def get_session_metadata() -> dict:
+    """Gather metadata about the current terminal session.
+    
+    Returns:
+        Dictionary with session metadata
+    """
+    session_id = get_session_id_from_env()
+    
+    metadata = {
+        "session_id": session_id or "unknown",
+        "persistent_id": session_id or "unknown",  # In simple case, use session_id
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "hostname": os.environ.get("HOSTNAME") or subprocess.run(
+            ["hostname"], capture_output=True, text=True
+        ).stdout.strip(),
+        "username": os.environ.get("USER") or os.environ.get("USERNAME"),
+        "working_directory": os.getcwd(),
+    }
+    
+    return metadata
+
+
+def store_session_metadata(commit_sha: str, metadata: dict) -> bool:
+    """Store session metadata in git notes.
+    
+    Args:
+        commit_sha: The commit SHA to annotate
+        metadata: Session metadata dictionary
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    notes_ref = "refs/notes/iterm-session"
+    metadata_json = json.dumps(metadata, indent=2)
+    
+    try:
+        # Store metadata in git notes
+        result = subprocess.run(
+            ["git", "notes", "--ref", notes_ref, "add", "-f", "-m", metadata_json, commit_sha],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Warning: Failed to store session metadata: {e.stderr}", file=sys.stderr)
+        return False
+
+
+def append_session_info_to_message(message_file: str, session_id: str) -> None:
+    """Append session ID to commit message as a trailer.
+    
+    Adds a "Session-ID: <id>" trailer to the commit message for easy reference.
+    This makes it visible in git log without needing to query git notes.
+    
+    Args:
+        message_file: Path to the commit message file
+        session_id: The session ID to append
+    """
+    try:
+        with open(message_file, 'r') as f:
+            content = f.read()
+        
+        # Check if session ID already present (avoid duplicates)
+        if "Session-ID:" in content:
+            return
+        
+        # Append session ID as a trailer
+        # Trailers are key-value pairs at the end of commit messages
+        with open(message_file, 'a') as f:
+            # Ensure there's a blank line before the trailer
+            if not content.endswith('\n\n'):
+                if not content.endswith('\n'):
+                    f.write('\n')
+                f.write('\n')
+            f.write(f"Session-ID: {session_id}\n")
+            
+    except Exception as e:
+        print(f"Warning: Failed to append session ID to message: {e}", file=sys.stderr)
+
+
+def main():
+    """Main hook entry point."""
+    if len(sys.argv) < 2:
+        print("Error: Missing commit message file argument", file=sys.stderr)
+        sys.exit(1)
+    
+    message_file = sys.argv[1]
+    commit_source = sys.argv[2] if len(sys.argv) > 2 else None
+    
+    # Get session metadata
+    metadata = get_session_metadata()
+    session_id = metadata["session_id"]
+    
+    # If we have a valid session ID, append it to the commit message
+    if session_id and session_id != "unknown":
+        append_session_info_to_message(message_file, session_id)
+        print(f"📱 Captured iTerm session: {session_id}", file=sys.stderr)
+    else:
+        print("ℹ️  Not running in iTerm2 (session ID not available)", file=sys.stderr)
+    
+    # Note: We can't store in git notes here because we don't have the commit SHA yet
+    # That happens in post-commit hook
+    
+    # Store metadata in a temporary file for the post-commit hook
+    temp_file = Path(".git") / "iterm-session-metadata.json"
+    try:
+        with open(temp_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Failed to save session metadata: {e}", file=sys.stderr)
+    
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
