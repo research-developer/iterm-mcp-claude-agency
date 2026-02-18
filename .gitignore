@@ -83,5 +83,8 @@ Untitled*.ipynb
 # Generated files (created at install time from templates)
 com.iterm-mcp.daemon.plist
 
+# Compressed files
+*.Z
+
 # Local iTerm configuration
 .iterm/
