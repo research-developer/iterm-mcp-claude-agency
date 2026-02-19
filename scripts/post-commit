@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Git post-commit hook to store iTerm session metadata.
+
+This hook runs after a commit is created and stores the session metadata
+captured by prepare-commit-msg in git notes.
+
+Installation:
+    Copy this file to .git/hooks/post-commit and make it executable:
+    $ cp scripts/post-commit .git/hooks/
+    $ chmod +x .git/hooks/post-commit
+
+The hook reads metadata from .git/iterm-session-metadata.json (created by
+prepare-commit-msg) and stores it in git notes under refs/notes/iterm-session.
+"""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+def get_current_commit_sha() -> str | None:
+    """Get the SHA of the commit just created.
+    
+    Returns:
+        Commit SHA or None if not in a git repo
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
+def store_session_metadata(commit_sha: str, metadata: dict) -> bool:
+    """Store session metadata in git notes.
+    
+    Args:
+        commit_sha: The commit SHA to annotate
+        metadata: Session metadata dictionary
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    notes_ref = "refs/notes/iterm-session"
+    metadata_json = json.dumps(metadata, indent=2)
+    
+    try:
+        subprocess.run(
+            ["git", "notes", "--ref", notes_ref, "add", "-f", "-m", metadata_json, commit_sha],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Warning: Failed to store session metadata: {e.stderr}", file=sys.stderr)
+        return False
+
+
+def main():
+    """Main hook entry point."""
+    # Get the commit SHA
+    commit_sha = get_current_commit_sha()
+    if not commit_sha:
+        print("Error: Could not determine commit SHA", file=sys.stderr)
+        sys.exit(1)
+    
+    # Read metadata from temporary file
+    temp_file = Path(".git") / "iterm-session-metadata.json"
+    if not temp_file.exists():
+        print("ℹ️  No session metadata to store", file=sys.stderr)
+        sys.exit(0)
+    
+    try:
+        with open(temp_file, 'r') as f:
+            metadata = json.load(f)
+        
+        # Store in git notes
+        if store_session_metadata(commit_sha, metadata):
+            session_id = metadata.get("session_id", "unknown")
+            print(f"✅ Stored session metadata for commit {commit_sha[:8]}", file=sys.stderr)
+            print(f"   Session ID: {session_id}", file=sys.stderr)
+        
+        # Clean up temporary file
+        temp_file.unlink()
+        
+    except Exception as e:
+        print(f"Warning: Failed to process session metadata: {e}", file=sys.stderr)
+    
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

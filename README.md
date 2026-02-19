@@ -31,6 +31,7 @@ See [EPIC_STATUS.md](EPIC_STATUS.md) for detailed implementation status.
 - Control character support (Ctrl+C, etc.)
 - Lightweight telemetry with MCP resource + optional dashboard for pane and team health (see [docs/telemetry.md](docs/telemetry.md))
 - **Role-based session specialization** with tool filtering and access control (see [docs/ROLES.md](docs/ROLES.md))
+- **Git commit session tracking** with GitHub PR comment integration for agent notifications (see [docs/git-session-tracking.md](docs/git-session-tracking.md))
 
 ## Requirements
 
@@ -1003,6 +1004,33 @@ send_cascade_message(
 ```
 
 For a detailed architectural comparison, see [docs/claude-code-mcp-analysis.md](docs/claude-code-mcp-analysis.md).
+
+## Git Commit Session Tracking
+
+Track which terminal sessions created each commit and enable agent notifications for GitHub PR comments. See [docs/git-session-tracking.md](docs/git-session-tracking.md) for full documentation.
+
+### Quick Start
+
+Install the git hooks in your repository:
+
+```bash
+./scripts/install-git-hooks.sh /path/to/your/repo
+```
+
+The hooks automatically capture the iTerm session ID on each commit and store it in git notes. Query session information:
+
+```bash
+# Show session info for a commit
+python scripts/query-session.py show <commit-sha>
+
+# List commits from a specific session
+python scripts/query-session.py list-session <session-id>
+
+# Get commit info from GitHub PR comment
+python scripts/query-session.py from-github owner repo comment_id
+```
+
+This enables routing PR comments and notifications back to the specific terminal/agent that created the code.
 
 ## License
 
