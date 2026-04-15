@@ -28,15 +28,21 @@ def register_all(mcp):
         orchestration,
         commands,
         sessions,
-        sessions_v2,  # SP2 method-semantic tool (coexists with legacy sessions).
-        agents_v2,    # SP2 method-semantic tool (coexists with legacy agents).
-        teams_v2,     # SP2 method-semantic tool (coexists with legacy manage_teams).
-        managers_v2,  # SP2 method-semantic tool (coexists with legacy manage_managers).
-        feedback_v2,  # SP2 method-semantic tool (coexists with legacy feedback tools).
-        memory_v2,    # SP2 method-semantic tool (coexists with legacy manage_memory).
-        services_v2,  # SP2 method-semantic tool (coexists with legacy manage_services).
-        roles_v2,     # SP2 method-semantic tool (coexists with legacy list_available_roles/check_tool_permission).
-        workflows_v2, # SP2 method-semantic tool (coexists with legacy trigger/list/get_history workflow tools).
+        sessions_v2,     # SP2 method-semantic tool (coexists with legacy sessions).
+        agents_v2,       # SP2 method-semantic tool (coexists with legacy agents).
+        teams_v2,        # SP2 method-semantic tool (coexists with legacy manage_teams).
+        managers_v2,     # SP2 method-semantic tool (coexists with legacy manage_managers).
+        feedback_v2,     # SP2 method-semantic tool (coexists with legacy feedback tools).
+        memory_v2,       # SP2 method-semantic tool (coexists with legacy manage_memory).
+        services_v2,     # SP2 method-semantic tool (coexists with legacy manage_services).
+        roles_v2,        # SP2 method-semantic tool (coexists with legacy list_available_roles/check_tool_permission).
+        workflows_v2,    # SP2 method-semantic tool (coexists with legacy trigger/list/get_history workflow tools).
+        messages_v2,     # SP2 action tool (coexists with legacy send_cascade_message/send_hierarchical_message).
+        orchestrate_v2,  # SP2 action tool (coexists with legacy orchestrate_playbook).
+        delegate_v2,     # SP2 action tool (coexists with legacy delegate_task/execute_plan).
+        wait_for_v2,     # SP2 action tool (coexists with legacy wait_for_agent).
+        subscribe_v2,    # SP2 action tool (coexists with legacy subscribe_to_output_pattern).
+        telemetry_v2,    # SP2 action tool (coexists with legacy start_telemetry_dashboard).
     )
 
     _MODULES = [
@@ -47,6 +53,8 @@ def register_all(mcp):
         commands, sessions, sessions_v2, agents_v2,
         teams_v2, managers_v2, feedback_v2, memory_v2,
         services_v2, roles_v2, workflows_v2,
+        messages_v2, orchestrate_v2, delegate_v2,
+        wait_for_v2, subscribe_v2, telemetry_v2,
     ]
 
     for mod in _MODULES:
