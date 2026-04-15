@@ -16,10 +16,8 @@ Registered under the provisional name ``workflows`` to coexist with the
 legacy per-verb tools; the cutover (rename to ``workflows`` and unregister
 the legacy tools) happens at the end of SP2.
 
-Note (PR #114 review): ``list`` reads ``event_bus._registry`` directly (the
-same private attribute the legacy ``list_workflow_events`` tool read).
-Adding a public introspection API on EventBus is out of scope for SP2 —
-we continue to use the private attribute here.
+``list`` uses the public ``EventBus.get_event_info`` introspection API
+(added on PR #114 to remove the previous ``event_bus._registry`` reach-in).
 """
 from typing import Any, Dict, Optional
 
@@ -122,19 +120,7 @@ class WorkflowsDispatcher(MethodDispatcher):
 
         events = []
         for name in sorted(event_names):
-            # Using the private ``_registry`` is intentional — matches the
-            # legacy list_workflow_events behavior; adding a public
-            # introspection API on EventBus is out of scope for SP2.
-            listeners = await event_bus._registry.get_listeners(name)
-            router = await event_bus._registry.get_router(name)
-            start_handler = await event_bus._registry.get_start_handler(name)
-            events.append({
-                "event_name": name,
-                "has_listeners": len(listeners) > 0,
-                "has_router": router is not None,
-                "is_start_event": start_handler is not None,
-                "listener_count": len(listeners),
-            })
+            events.append(await event_bus.get_event_info(name))
 
         flow_names = flow_manager.list_flows() if flow_manager else []
 

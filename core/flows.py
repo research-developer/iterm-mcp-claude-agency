@@ -495,6 +495,53 @@ class EventBus:
         """Get list of all registered event names."""
         return list(await self._registry.get_all_event_names())
 
+    # ------------------------------------------------------------------
+    # Public introspection API
+    #
+    # These methods provide read-only visibility into event registrations
+    # without exposing the internal ListenerRegistry. Tools (e.g. the
+    # workflows OPTIONS inspector) should call these instead of reaching
+    # into EventBus._registry directly.
+    # ------------------------------------------------------------------
+
+    async def get_listener_count(self, event_name: str) -> int:
+        """Return the number of plain listeners registered for an event.
+
+        Routers and start handlers are counted separately via
+        :meth:`has_router` and :meth:`has_start_handler`. Returns 0 if the
+        event is not registered.
+        """
+        listeners = await self._registry.get_listeners(event_name)
+        return len(listeners)
+
+    async def has_router(self, event_name: str) -> bool:
+        """Return True if a @router handler is registered for an event."""
+        router = await self._registry.get_router(event_name)
+        return router is not None
+
+    async def has_start_handler(self, event_name: str) -> bool:
+        """Return True if a @start handler is registered for an event."""
+        start_handler = await self._registry.get_start_handler(event_name)
+        return start_handler is not None
+
+    async def get_event_info(self, event_name: str) -> Dict[str, Any]:
+        """Return an introspection snapshot for a single event.
+
+        The returned dict is suitable for inclusion in an OPTIONS/inspect
+        response. For unregistered events this returns a snapshot with
+        zero listeners and no router/start handler.
+        """
+        listeners = await self._registry.get_listeners(event_name)
+        router = await self._registry.get_router(event_name)
+        start_handler = await self._registry.get_start_handler(event_name)
+        return {
+            "event_name": event_name,
+            "listener_count": len(listeners),
+            "has_listeners": len(listeners) > 0,
+            "has_router": router is not None,
+            "is_start_event": start_handler is not None,
+        }
+
     def register_flow(self, flow_instance: "Flow") -> None:
         """Register a flow instance."""
         flow_key = flow_instance.__class__.__name__

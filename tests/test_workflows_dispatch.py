@@ -139,16 +139,24 @@ class TestListEvents(unittest.TestCase):
     def test_list_events_default_target(self):
         eb = MagicMock()
         eb.get_registered_events = AsyncMock(return_value=["evt_b", "evt_a"])
-        registry = MagicMock()
         # evt_a has 2 listeners + router; evt_b has none.
-        registry.get_listeners = AsyncMock(
-            side_effect=lambda name: [MagicMock(), MagicMock()] if name == "evt_a" else []
+        evt_a_info = {
+            "event_name": "evt_a",
+            "listener_count": 2,
+            "has_listeners": True,
+            "has_router": True,
+            "is_start_event": False,
+        }
+        evt_b_info = {
+            "event_name": "evt_b",
+            "listener_count": 0,
+            "has_listeners": False,
+            "has_router": False,
+            "is_start_event": False,
+        }
+        eb.get_event_info = AsyncMock(
+            side_effect=lambda name: evt_a_info if name == "evt_a" else evt_b_info
         )
-        registry.get_router = AsyncMock(
-            side_effect=lambda name: MagicMock() if name == "evt_a" else None
-        )
-        registry.get_start_handler = AsyncMock(return_value=None)
-        eb._registry = registry
 
         fm = MagicMock()
         fm.list_flows.return_value = ["MyFlow"]
@@ -184,11 +192,13 @@ class TestListEvents(unittest.TestCase):
         """target='events' should yield the same list as target=None."""
         eb = MagicMock()
         eb.get_registered_events = AsyncMock(return_value=["evt_x"])
-        registry = MagicMock()
-        registry.get_listeners = AsyncMock(return_value=[MagicMock()])
-        registry.get_router = AsyncMock(return_value=None)
-        registry.get_start_handler = AsyncMock(return_value=MagicMock())
-        eb._registry = registry
+        eb.get_event_info = AsyncMock(return_value={
+            "event_name": "evt_x",
+            "listener_count": 1,
+            "has_listeners": True,
+            "has_router": False,
+            "is_start_event": True,
+        })
 
         parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
