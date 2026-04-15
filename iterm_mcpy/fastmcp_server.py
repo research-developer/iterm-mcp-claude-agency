@@ -434,24 +434,29 @@ async def oauth_protected_resource_mcp_metadata(request: Request) -> JSONRespons
 
 
 # All tool implementations live in iterm_mcpy/tools/ — see tools/__init__.py
-# for the module list. Breadcrumbs per domain:
-#   sessions.py        — list/set_tags/manage_lock/list_my_locks/set_active/create/split
-#   commands.py        — write/read/send_cascade/send_hierarchical/select_panes
-#   orchestration.py   — orchestrate_playbook
-#   control.py         — send_control_character/send_special_key/check_session_status
-#   agents.py          — register_agent/list_agents/remove_agent/manage_teams
-#   modifications.py   — modify_sessions
-#   monitoring.py      — start_monitoring_session/stop_monitoring_session
-#   notifications.py   — get_notifications/notify/get_agent_status_summary
-#   wait.py            — wait_for_agent
-#   feedback.py        — submit_feedback/query_feedback/fork/triage/notify_update/config
-#   services.py        — manage_services
-#   managers.py        — manage_managers/delegate_task/execute_plan
-#   roles.py           — assign/get/remove/list session roles, check_tool_permission
-#   telemetry.py       — start_telemetry_dashboard
-#   workflows.py       — trigger_workflow_event/list/history/subscribe_to_output_pattern
-#   memory.py          — manage_memory
-#   agent_hooks.py     — manage_agent_hooks
+# for the module list. The SP2 surface is 15 method-semantic tools:
+#
+# Collections (9):
+#   sessions.py        — GET/HEAD/POST/PATCH/DELETE sessions + sub-resources
+#                        (output, keys, tags, roles, locks, monitoring, splits,
+#                         appearance, active, status)
+#   agents.py          — register/list/remove agents; notifications; hooks;
+#                        locks held by an agent
+#   teams.py           — create/list/remove teams; assign/remove team agents
+#   managers.py        — create/list/remove manager agents; add/remove workers
+#   feedback.py        — submit/query/triage/fork feedback; config; triggers
+#   memory.py          — store/retrieve/search/list/delete memories
+#   services.py        — list/add/configure/start/stop/remove services
+#   roles.py           — discover available roles (read-only catalog)
+#   workflows.py       — trigger/list/history workflow events
+#
+# Actions (6):
+#   messages.py        — send cascade / hierarchical messages between sessions
+#   orchestrate.py     — orchestrate multi-step playbooks
+#   delegate.py        — delegate a task or execute a plan through a manager
+#   wait_for.py        — long-poll for an agent to complete
+#   subscribe.py       — subscribe to terminal output patterns
+#   telemetry.py       — start/stop the telemetry dashboard
 
 
 # ============================================================================
@@ -637,11 +642,6 @@ Watch for:
 
 Coordinate responses as needed using write_to_sessions or send_cascade_message.
 """
-
-
-# Re-export for backward compatibility with tests that import wait_for_agent
-# from this module.
-from iterm_mcpy.tools.wait import wait_for_agent  # noqa: E402,F401
 
 
 @mcp.resource("telemetry://dashboard")

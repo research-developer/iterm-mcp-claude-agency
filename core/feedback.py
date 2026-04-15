@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, ClassVar, Dict, List, Optional, TYPE_CHECKING
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -163,6 +163,11 @@ class FeedbackEntry(BaseModel):
         default=None,
         description="Claude session ID of the forked conversation"
     )
+
+    # SP2: fields returned by HEAD (compact projection).
+    # id + title + category + status gives callers enough to triage feedback
+    # without pulling context/diffs/etc.
+    HEAD_FIELDS: ClassVar[set[str]] = {"id", "title", "category", "status"}
 
 
 class TriggerConfig(BaseModel):

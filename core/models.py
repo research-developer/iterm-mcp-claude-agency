@@ -3,7 +3,7 @@
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, ClassVar, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Supported AI agent CLI types
@@ -938,6 +938,10 @@ class SessionInfo(BaseModel):
     last_activity: Optional[datetime] = Field(default=None, description="Time of last output change")
     last_message: Optional[str] = Field(default=None, description="Last Claude response (truncated)")
     process_name: Optional[str] = Field(default=None, description="Running process name")
+
+    # SP2: fields returned by HEAD (compact projection).
+    # is_processing and locked give just enough to identify a session's state.
+    HEAD_FIELDS: ClassVar[set[str]] = {"session_id", "name", "agent", "is_processing", "locked"}
 
 
 class ListSessionsRequest(BaseModel):

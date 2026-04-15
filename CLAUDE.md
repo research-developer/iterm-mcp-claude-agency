@@ -134,36 +134,45 @@ iterm-mcp/
 ├── iterm_mcpy/                   # MCP server package
 │   ├── fastmcp_server.py         # Slim server: lifespan, resources, prompts, register_all()
 │   ├── helpers.py                # Shared helpers (resolve_session, execute_*)
-│   ├── responses.py              # ok_json() — token-efficient serialization
-│   └── tools/                    # Tool modules split by domain (17 modules, 52 tools)
-│       ├── __init__.py           # register_all(mcp) composes all modules
-│       ├── sessions.py           # list/create/split/tag/lock sessions (7 tools)
-│       ├── commands.py           # read/write/cascade/hierarchical (5 tools)
-│       ├── agents.py             # register/list/remove agents, teams (4 tools)
-│       ├── roles.py              # role-based access control (7 tools)
-│       ├── feedback.py           # submit/query/fork/triage (7 tools)
-│       ├── managers.py           # hierarchical delegation (3 tools)
-│       ├── notifications.py      # get/notify/summary (3 tools)
-│       ├── control.py            # send_control_character/special_key/status (3 tools)
-│       ├── monitoring.py         # start/stop monitoring (2 tools)
-│       ├── modifications.py      # modify_sessions (1 tool)
-│       ├── orchestration.py      # orchestrate_playbook (1 tool)
-│       ├── wait.py               # wait_for_agent (1 tool)
-│       ├── memory.py             # manage_memory (1 tool)
-│       ├── services.py           # manage_services (1 tool)
-│       ├── agent_hooks.py        # manage_agent_hooks (1 tool)
-│       ├── workflows.py          # event bus / workflows (4 tools)
-│       └── telemetry.py          # start_telemetry_dashboard (1 tool)
+│   ├── dispatcher.py             # MethodDispatcher base (WebSpec method semantics)
+│   ├── responses.py              # ok_envelope/err_envelope — method-tagged serialization
+│   └── tools/                    # SP2 method-semantic tools (15 tools + shared helpers)
+│       ├── __init__.py           # register_all(mcp) composes all 15 tool modules
+│       ├── _callbacks.py         # Shared manager-callback wiring (private)
+│       │
+│       │ # Collections (9) — GET/POST/PATCH/DELETE + Definer Verbs
+│       ├── sessions.py           # list/create/split + output/keys/tags/roles/locks/monitoring
+│       ├── agents.py             # register/list/remove + notifications/hooks/locks
+│       ├── teams.py              # create/list/remove + team membership
+│       ├── managers.py           # create/list/remove managers + worker mgmt
+│       ├── feedback.py           # submit/query/triage/fork + triggers/config
+│       ├── memory.py             # store/retrieve/search/delete + stats
+│       ├── services.py           # list/add/configure/start/stop + scoping
+│       ├── roles.py              # read-only catalog of session roles
+│       ├── workflows.py          # trigger/list/history workflow events
+│       │
+│       │ # Actions (6) — POST + INVOKE/SEND/TRIGGER, or GET (long-poll)
+│       ├── messages.py           # cascade / hierarchical multi-session messaging
+│       ├── orchestrate.py        # multi-step playbook execution
+│       ├── delegate.py           # delegate task / execute plan through a manager
+│       ├── wait_for.py           # long-poll for agent idle (GET)
+│       ├── subscribe.py          # arm an output-pattern subscription
+│       └── telemetry.py          # start/stop telemetry dashboard
 └── utils/                        # Utility functions
     └── logging.py                # Logging and monitoring utilities
 ```
 
 Each tool module:
-- Defines tool functions (without `@mcp.tool()` decorators)
-- Exposes a `register(mcp)` function that registers them with the FastMCP instance
-- Imports shared helpers from `iterm_mcpy.helpers` and `iterm_mcpy.responses`
+- Defines a single user-facing dispatcher function matching the module name
+- Routes through `MethodDispatcher` (collections) or WebSpec verb resolution (actions)
+- Exposes a `register(mcp)` function that registers the tool with FastMCP
+- Returns a method-tagged envelope via `ok_envelope` / `err_envelope`
 
-All response serialization goes through `ok_json()` in `iterm_mcpy/responses.py`, which applies `exclude_none=True` to drop null fields and save ~35% of response tokens.
+`sessions.py` also hosts the shared internals it used to pull from the
+deleted per-verb modules (`_list_sessions_core`, `_split_session_core`,
+`_start_monitoring_core`, `_stop_monitoring_core`,
+`_apply_session_modification`). Manager-worker callback wiring lives
+in `_callbacks.py` since both `managers.py` and `delegate.py` need it.
 
 ### Branches
 - `applescript-implementation`: Contains the original AppleScript-based code
@@ -256,29 +265,36 @@ git worktree remove .worktrees/<name>
 
 ### MCP Server Implementation
 
-#### Tools Provided
+#### Tools Provided (SP2 method-semantic surface — 15 tools)
 
-**Core Terminal Tools:**
-- **write_to_terminal**: Send commands to named sessions
-- **read_terminal_output**: Read output from terminal sessions (with line limit options)
-- **send_control_character**: Send Ctrl+C and other control sequences
-- **list_sessions**: Show all available terminal sessions
-- **focus_session**: Make a specific session active
-- **check_session_status**: Check if a command is running
-- **create_layout**: Create a new window with predefined pane arrangement
-- **get_session_by_persistent_id**: Reconnect to existing sessions by persistent ID
-- **set_session_max_lines**: Configure output line limits per session
+The server exposes 15 tools that cover the full iTerm MCP API. Each tool
+takes an `op` parameter (HTTP method or friendly alias) and routes to
+the appropriate handler via WebSpec method semantics (GET/POST/PATCH/
+DELETE/HEAD/OPTIONS) and Definer Verbs (CREATE/SEND/TRIGGER/MODIFY/
+APPEND/INVOKE). Every tool supports `op="OPTIONS"` to return its own
+schema.
 
-**Consolidated Management Tools (operation-based):**
-- **manage_memory**: Memory store operations (store, retrieve, search, list_keys, delete, list_namespaces, clear_namespace, stats)
-- **manage_services**: Service management (list, start, stop, add, configure, get_inactive)
-- **manage_session_lock**: Session locking (lock, unlock, request_access)
-- **manage_teams**: Team operations (create, list, remove, assign_agent, remove_agent)
-- **manage_managers**: Manager operations (create, list, get_info, remove, add_worker, remove_worker)
+**Collections (9):**
+- **sessions** — session lifecycle (list/create/split), output I/O,
+  keys, tags, roles, locks, monitoring, appearance, focus
+- **agents** — register/list/remove agents, notifications, hooks, locks
+  held by an agent
+- **teams** — create/list/remove teams, assign & remove team members
+- **managers** — create/list/remove manager agents, add/remove workers
+- **feedback** — submit/query feedback, triage to GitHub, fork for
+  testing, triggers, config
+- **memory** — store/retrieve/search/delete memories, stats, namespaces
+- **services** — list/add/configure/start/stop/remove services
+- **roles** — read-only catalog of available session roles
+- **workflows** — trigger/list/history workflow events
 
-**Orchestration Tools:**
-- **delegate_task**: Delegate tasks through managers to workers
-- **execute_plan**: Execute multi-step task plans
+**Actions (6):**
+- **messages** — send cascade/hierarchical messages across sessions
+- **orchestrate** — run a multi-step playbook (layout + commands + reads)
+- **delegate** — delegate a single task or multi-step plan through a manager
+- **wait_for** — long-poll for an agent to become idle (GET)
+- **subscribe** — arm a terminal output-pattern subscription
+- **telemetry** — start/stop the telemetry dashboard
 
 #### Key Features
 - Named sessions with persistent identity across restarts

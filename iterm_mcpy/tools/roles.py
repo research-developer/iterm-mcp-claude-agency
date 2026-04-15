@@ -1,200 +1,96 @@
-"""Role management tools.
+"""SP2 method-semantic `roles` tool — Task 11.
 
-Provides tools to assign, query, and manage session roles for tool access
-control. Roles include devops, builder, debugger, researcher, tester,
-orchestrator, monitor, and custom.
+Eighth SP2 collection tool (after sessions + agents + teams +
+managers + feedback + memory + services). Replaces the legacy
+``list_available_roles`` and ``check_tool_permission`` tools.
+
+Roles are a read-only catalog in SP2 — role *assignment* happens through
+``sessions`` (target='roles'), which already exposes PATCH/DELETE for
+role assignment and GET for listing a session's role. What remains here:
+
+    - list_available_roles   -> GET /roles                  (target=None)
+    - check_tool_permission  -> GET /roles/permissions      (target='permissions')
+
+Note: ``check_tool_permission`` is session-centric (it takes a session_id
+and checks what that session's assigned role allows). For SP2 it's kept
+under ``roles`` to preserve legacy semantics — a future refactor may
+move it into ``sessions``.
+
+Registered under the provisional name ``roles`` to coexist with the
+legacy per-verb tools; the cutover (rename to ``roles`` and unregister
+the legacy tools) happens at the end of SP2.
 """
-
-import json
 from typing import Optional
 
 from mcp.server.fastmcp import Context
 
-from core.agents import AgentRegistry
-from core.models import SessionRole
-from core.roles import RoleManager
+from iterm_mcpy.dispatcher import MethodDispatcher
 
 
-async def assign_session_role(
-    ctx: Context,
-    session_id: str,
-    role: str,
-    assigned_by: Optional[str] = None,
-) -> str:
-    """Assign a role to a session for tool access control.
+class RolesDispatcher(MethodDispatcher):
+    """Dispatcher for the `roles` collection (SP2 method-semantic).
 
-    Args:
-        session_id: The iTerm session ID to assign the role to
-        role: The role name (devops, builder, debugger, researcher, tester, orchestrator, monitor, custom)
-        assigned_by: Optional agent name that is assigning this role (must have can_modify_roles permission)
+    Read-only — roles are a catalog, not a mutable collection. Role
+    assignment to sessions happens through sessions (target='roles').
     """
-    role_manager: RoleManager = ctx.request_context.lifespan_context["role_manager"]
-    agent_registry: AgentRegistry = ctx.request_context.lifespan_context["agent_registry"]
-    logger = ctx.request_context.lifespan_context["logger"]
 
-    try:
-        # Permission check: if assigned_by is provided, verify they have can_modify_roles
-        if assigned_by:
-            caller_agent = agent_registry.get_agent(assigned_by)
-            if caller_agent:
-                caller_session_id = caller_agent.session_id
-                if not role_manager.can_modify_roles(caller_session_id):
-                    return json.dumps({
-                        "error": f"Agent '{assigned_by}' does not have permission to modify roles. "
-                                 "Only sessions with can_modify_roles=True (e.g., orchestrator) can assign roles."
-                    }, indent=2)
+    collection = "roles"
 
-        # Convert string to SessionRole enum
-        try:
-            session_role = SessionRole(role.lower())
-        except ValueError:
-            valid_roles = [r.value for r in SessionRole]
-            return json.dumps({
-                "error": f"Invalid role '{role}'. Valid roles are: {valid_roles}"
-            }, indent=2)
+    METHODS = {
+        "GET": {
+            "aliases": ["list", "get", "read", "check"],
+            "params": [
+                "target=None | target='permissions'",
+                # permissions:
+                "session_id?",
+                "tool_name?",
+            ],
+            "description": (
+                "List available role definitions (target=None) or check "
+                "whether a specific session's role allows a given tool "
+                "(target='permissions', requires session_id + tool_name)."
+            ),
+        },
+        "HEAD": {"compact_fields": ["role", "description"]},
+        "OPTIONS": {"description": "Return this schema."},
+    }
 
-        assignment = role_manager.assign_role(
-            session_id=session_id,
-            role=session_role,
-            assigned_by=assigned_by,
-        )
+    sub_resources = ["permissions"]
 
-        logger.info(f"Assigned role {role} to session {session_id}")
+    # -------------------------------- GET -------------------------------- #
 
-        return json.dumps({
-            "status": "success",
-            "session_id": session_id,
-            "role": assignment.role.value,
-            "description": assignment.role_config.description,
-            "can_spawn_agents": assignment.role_config.can_spawn_agents,
-            "can_modify_roles": assignment.role_config.can_modify_roles,
-            "priority": assignment.role_config.priority,
-            "assigned_at": assignment.assigned_at.isoformat(),
-            "assigned_by": assignment.assigned_by,
-        }, indent=2)
-    except Exception as e:
-        logger.error(f"Error assigning role: {e}")
-        return json.dumps({"error": str(e)}, indent=2)
+    async def on_get(self, ctx, **params):
+        """Route GET by `target` — list role defs or check tool permission."""
+        target = params.get("target")
+        if target == "permissions":
+            return await self._check_permission(ctx, **params)
+        return await self._list_available(ctx, **params)
 
+    async def on_head(self, ctx, **params):
+        """HEAD /roles — compact projection honoring advertised compact_fields.
 
-async def get_session_role(
-    ctx: Context,
-    session_id: str,
-) -> str:
-    """Get the role assignment for a session.
+        GET returns plain dicts, so the default ``project_head`` pass-through
+        would return the full payload. Manually project down to the
+        ``compact_fields`` advertised in ``METHODS["HEAD"]`` so HEAD is
+        genuinely cheaper / smaller than GET.
+        """
+        full = await self.on_get(ctx, **params)
+        fields = self.METHODS["HEAD"]["compact_fields"]
+        projected = [
+            {k: r.get(k) for k in fields} for r in full.get("roles", [])
+        ]
+        return {"roles": projected, "count": full.get("count", len(projected))}
 
-    Args:
-        session_id: The iTerm session ID to get the role for
-    """
-    role_manager: RoleManager = ctx.request_context.lifespan_context["role_manager"]
-    logger = ctx.request_context.lifespan_context["logger"]
+    async def _list_available(self, ctx, **params):
+        """GET /roles — list available role definitions (the catalog).
 
-    try:
-        description = role_manager.describe(session_id)
-        return json.dumps(description, indent=2)
-    except Exception as e:
-        logger.error(f"Error getting session role: {e}")
-        return json.dumps({"error": str(e)}, indent=2)
+        Mirrors the legacy ``list_available_roles`` return shape: iterates
+        ``SessionRole`` enum and looks up each role's config in
+        ``DEFAULT_ROLE_CONFIGS``, falling back to a generic custom-role
+        payload for roles without a default config.
+        """
+        from core.models import DEFAULT_ROLE_CONFIGS, SessionRole
 
-
-async def remove_session_role(
-    ctx: Context,
-    session_id: str,
-    removed_by: Optional[str] = None,
-) -> str:
-    """Remove the role assignment from a session.
-
-    Args:
-        session_id: The iTerm session ID to remove the role from
-        removed_by: Optional agent name that is removing this role (must have can_modify_roles permission)
-    """
-    role_manager: RoleManager = ctx.request_context.lifespan_context["role_manager"]
-    agent_registry: AgentRegistry = ctx.request_context.lifespan_context["agent_registry"]
-    logger = ctx.request_context.lifespan_context["logger"]
-
-    try:
-        # Permission check: if removed_by is provided, verify they have can_modify_roles
-        if removed_by:
-            caller_agent = agent_registry.get_agent(removed_by)
-            if caller_agent:
-                caller_session_id = caller_agent.session_id
-                if not role_manager.can_modify_roles(caller_session_id):
-                    return json.dumps({
-                        "error": f"Agent '{removed_by}' does not have permission to modify roles. "
-                                 "Only sessions with can_modify_roles=True (e.g., orchestrator) can remove roles."
-                    }, indent=2)
-
-        removed = role_manager.remove_role(session_id)
-        if removed:
-            logger.info(f"Removed role from session {session_id}")
-            return json.dumps({
-                "status": "success",
-                "session_id": session_id,
-                "message": "Role removed successfully"
-            }, indent=2)
-        else:
-            return json.dumps({
-                "status": "not_found",
-                "session_id": session_id,
-                "message": "No role was assigned to this session"
-            }, indent=2)
-    except Exception as e:
-        logger.error(f"Error removing session role: {e}")
-        return json.dumps({"error": str(e)}, indent=2)
-
-
-async def list_session_roles(
-    ctx: Context,
-    role_filter: Optional[str] = None,
-) -> str:
-    """List all session role assignments.
-
-    Args:
-        role_filter: Optional role name to filter by
-    """
-    role_manager: RoleManager = ctx.request_context.lifespan_context["role_manager"]
-    logger = ctx.request_context.lifespan_context["logger"]
-
-    try:
-        filter_role = None
-        if role_filter:
-            try:
-                filter_role = SessionRole(role_filter.lower())
-            except ValueError:
-                valid_roles = [r.value for r in SessionRole]
-                return json.dumps({
-                    "error": f"Invalid role filter '{role_filter}'. Valid roles are: {valid_roles}"
-                }, indent=2)
-
-        assignments = role_manager.list_roles(role_filter=filter_role)
-
-        result = []
-        for assignment in assignments:
-            result.append({
-                "session_id": assignment.session_id,
-                "role": assignment.role.value,
-                "description": assignment.role_config.description,
-                "priority": assignment.role_config.priority,
-                "assigned_at": assignment.assigned_at.isoformat(),
-                "assigned_by": assignment.assigned_by,
-            })
-
-        return json.dumps({
-            "count": len(result),
-            "assignments": result,
-        }, indent=2)
-    except Exception as e:
-        logger.error(f"Error listing session roles: {e}")
-        return json.dumps({"error": str(e)}, indent=2)
-
-
-async def list_available_roles(
-    ctx: Context,
-) -> str:
-    """List all available session roles and their default configurations."""
-    from core.models import DEFAULT_ROLE_CONFIGS
-
-    try:
         roles = []
         for role in SessionRole:
             config = DEFAULT_ROLE_CONFIGS.get(role)
@@ -221,29 +117,30 @@ async def list_available_roles(
                     "priority": 3,
                 })
 
-        return json.dumps({
+        return {
             "count": len(roles),
             "roles": roles,
-        }, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)}, indent=2)
+        }
 
+    async def _check_permission(self, ctx, **params):
+        """GET /roles/permissions — check a tool permission for a session.
 
-async def check_tool_permission(
-    ctx: Context,
-    session_id: str,
-    tool_name: str,
-) -> str:
-    """Check if a specific tool is allowed for a session based on its role.
+        Mirrors the legacy ``check_tool_permission`` return shape:
+        {session_id, tool_name, allowed, reason, role, has_role}.
+        """
+        session_id = params.get("session_id")
+        tool_name = params.get("tool_name")
+        if not session_id:
+            raise ValueError("check permission requires session_id")
+        if not tool_name:
+            raise ValueError("check permission requires tool_name")
 
-    Args:
-        session_id: The iTerm session ID to check
-        tool_name: The name of the tool to check permission for
-    """
-    role_manager: RoleManager = ctx.request_context.lifespan_context["role_manager"]
-    logger = ctx.request_context.lifespan_context["logger"]
+        lifespan = ctx.request_context.lifespan_context
+        role_manager = lifespan.get("role_manager")
+        if role_manager is None:
+            raise RuntimeError("role_manager not available")
 
-    try:
+        # is_tool_allowed returns (allowed: bool, reason: Optional[str])
         allowed, reason = role_manager.is_tool_allowed(session_id, tool_name)
 
         assignment = role_manager.get_role(session_id)
@@ -252,57 +149,66 @@ async def check_tool_permission(
             "has_role": assignment is not None,
         }
 
-        return json.dumps({
+        return {
             "session_id": session_id,
             "tool_name": tool_name,
             "allowed": allowed,
             "reason": reason,
             **role_info,
-        }, indent=2)
-    except Exception as e:
-        logger.error(f"Error checking tool permission: {e}")
-        return json.dumps({"error": str(e)}, indent=2)
+        }
 
 
-async def get_sessions_by_role(
+_dispatcher = RolesDispatcher()
+
+
+async def roles(
     ctx: Context,
-    role: str,
+    op: str = "GET",
+    definer: Optional[str] = None,
+    target: Optional[str] = None,
+    session_id: Optional[str] = None,
+    tool_name: Optional[str] = None,
 ) -> str:
-    """Get all session IDs that have a specific role assigned.
+    """Roles catalog: list role definitions, check tool permissions.
+
+    Use op="list" (or op="GET") to list all available role definitions —
+      the catalog of roles (devops/builder/debugger/... + custom) with
+      their default tool allowlists, restrictions, and capabilities.
+    Use op="GET" + target="permissions" + session_id + tool_name to check
+      whether a specific session's assigned role allows a given tool
+      (aka the legacy check_tool_permission op). Returns the decision
+      plus the session's current role (or has_role=false if unassigned).
+    Use op="HEAD" (or "peek"/"summary") for a compact list.
+    Use op="OPTIONS" (or "schema") to discover the tool's surface.
 
     Args:
-        role: The role name to filter by
+        op: HTTP method or friendly verb.
+        definer: Explicit definer (not used — roles is read-only).
+        target: Sub-resource: 'permissions' for a tool-permission check.
+        session_id: Session id (required for target='permissions').
+        tool_name: Tool name (required for target='permissions').
+
+    This is SP2's eighth method-semantic collection tool. It coexists with
+    the legacy ``list_available_roles`` and ``check_tool_permission``
+    tools and will eventually replace them.
+
+    Note: role *assignment* (assign/remove a role to a session) is handled
+    by ``sessions`` (target='roles'), not here — roles is read-only.
     """
-    role_manager: RoleManager = ctx.request_context.lifespan_context["role_manager"]
-    logger = ctx.request_context.lifespan_context["logger"]
-
-    try:
-        try:
-            session_role = SessionRole(role.lower())
-        except ValueError:
-            valid_roles = [r.value for r in SessionRole]
-            return json.dumps({
-                "error": f"Invalid role '{role}'. Valid roles are: {valid_roles}"
-            }, indent=2)
-
-        session_ids = role_manager.get_sessions_by_role(session_role)
-
-        return json.dumps({
-            "role": session_role.value,
-            "count": len(session_ids),
-            "session_ids": session_ids,
-        }, indent=2)
-    except Exception as e:
-        logger.error(f"Error getting sessions by role: {e}")
-        return json.dumps({"error": str(e)}, indent=2)
+    raw_params = {
+        "target": target,
+        "session_id": session_id,
+        "tool_name": tool_name,
+    }
+    params = {k: v for k, v in raw_params.items() if v is not None}
+    return await _dispatcher.dispatch(ctx=ctx, op=op, definer=definer, **params)
 
 
 def register(mcp):
-    """Register role management tools with the FastMCP instance."""
-    mcp.tool()(assign_session_role)
-    mcp.tool()(get_session_role)
-    mcp.tool()(remove_session_role)
-    mcp.tool()(list_session_roles)
-    mcp.tool()(list_available_roles)
-    mcp.tool()(check_tool_permission)
-    mcp.tool()(get_sessions_by_role)
+    """Register the roles dispatcher tool.
+
+    Named ``roles`` to coexist with the legacy ``list_available_roles``
+    and ``check_tool_permission`` tools during the SP2 coexistence period.
+    Final cutover (renaming to ``roles``) happens at the end of SP2.
+    """
+    mcp.tool(name="roles")(roles)

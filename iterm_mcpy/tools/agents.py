@@ -1,41 +1,568 @@
-"""Agent and team management tools.
+"""SP2 method-semantic `agents` tool.
 
-Provides tools for registering agents, listing agents, removing agents,
-and managing teams (create/list/remove/assign_agent/remove_agent) via a
-single consolidated manage_teams tool.
+Collection tool implementing the WebSpec agent surface. Replaces 8 SP1 tools:
+    - register_agent          -> POST + CREATE  /agents
+    - list_agents             -> GET             /agents
+    - remove_agent            -> DELETE          /agents/{name}
+    - get_agent_status_summary-> GET             /agents/status (sub-resource)
+    - manage_agent_hooks      -> GET/PATCH/POST  /agents/{name}/hooks (sub-ops via hooks_op)
+    - get_notifications       -> GET             /agents/{name}/notifications
+    - notify                  -> POST + SEND     /agents/{name}/notifications
+    - list_my_locks           -> GET             /agents/{name}/locks
 """
-
 import json
-from typing import Optional
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
 
 from mcp.server.fastmcp import Context
 
 from core.models import (
-    ManageTeamsRequest,
-    ManageTeamsResponse,
+    AgentNotification,
+    GetNotificationsRequest,
+    GetNotificationsResponse,
+    ManageAgentHooksRequest,
+    ManageAgentHooksResponse,
     RegisterAgentRequest,
 )
+from iterm_mcpy.dispatcher import MethodDispatcher
 
 
-def _ensure_model(model_cls, payload):
-    """Validate or coerce an incoming payload into a Pydantic model."""
-    if isinstance(payload, model_cls):
-        return payload
-    return model_cls.model_validate(payload)
+async def _manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> str:
+    """Unified agent hooks management (module-local helper).
 
+    Ported from the SP1 ``manage_agent_hooks`` tool. Kept as a JSON-returning
+    helper because every sub-operation already returns a populated
+    ``ManageAgentHooksResponse`` and the dispatcher wrapper re-parses the
+    payload into a native dict for the envelope.
 
-async def register_agent(request: RegisterAgentRequest, ctx: Context) -> str:
-    """Register an agent for a session."""
-
-    terminal = ctx.request_context.lifespan_context["terminal"]
-    agent_registry = ctx.request_context.lifespan_context["agent_registry"]
+    Operations:
+    - get_config: Get current global hooks configuration
+    - update_config: Update global hooks configuration
+    - get_repo_config: Get hooks config for a specific repo (.iterm/hooks.json)
+    - trigger_path_change: Manually trigger path change hook for a session
+    - get_stats: Get hook manager statistics
+    - set_variable: Set an iTerm user variable to enable/disable hooks per session
+    - get_variable: Get an iTerm user variable value
+    """
     logger = ctx.request_context.lifespan_context["logger"]
 
     try:
-        req = _ensure_model(RegisterAgentRequest, request)
+        from core.agent_hooks import get_agent_hook_manager, GlobalHooksConfig
+
+        hook_manager = get_agent_hook_manager()
+        op = request.operation
+
+        # GET_CONFIG operation.
+        if op == "get_config":
+            config = hook_manager.config
+            return ManageAgentHooksResponse(
+                operation=op,
+                success=True,
+                data=config.model_dump()
+            ).model_dump_json(indent=2, exclude_none=True)
+
+        # UPDATE_CONFIG operation.
+        elif op == "update_config":
+            config_updates = {}
+            if request.enabled is not None:
+                config_updates["enabled"] = request.enabled
+            if request.auto_team_assignment is not None:
+                config_updates["auto_team_assignment"] = request.auto_team_assignment
+            if request.fallback_team_from_repo is not None:
+                config_updates["fallback_team_from_repo"] = request.fallback_team_from_repo
+            if request.pass_session_id_default is not None:
+                config_updates["pass_session_id_default"] = request.pass_session_id_default
+
+            if config_updates:
+                current_data = hook_manager.config.model_dump()
+                current_data.update(config_updates)
+                hook_manager.config = GlobalHooksConfig(**current_data)
+                hook_manager.save_global_config()
+                logger.info(f"Updated agent hooks config: {config_updates}")
+
+            return ManageAgentHooksResponse(
+                operation=op,
+                success=True,
+                data={
+                    "updated": config_updates,
+                    "config": hook_manager.config.model_dump()
+                }
+            ).model_dump_json(indent=2, exclude_none=True)
+
+        # GET_REPO_CONFIG operation.
+        elif op == "get_repo_config":
+            if not request.repo_path:
+                return ManageAgentHooksResponse(
+                    operation=op,
+                    success=False,
+                    error="repo_path is required for get_repo_config operation"
+                ).model_dump_json(indent=2, exclude_none=True)
+
+            repo_config = hook_manager.load_repo_config(request.repo_path)
+            return ManageAgentHooksResponse(
+                operation=op,
+                success=True,
+                data={
+                    "repo_path": request.repo_path,
+                    "config": repo_config.model_dump() if repo_config else None,
+                    "config_file": str(Path(request.repo_path) / hook_manager.config.repo_config_filename)
+                }
+            ).model_dump_json(indent=2, exclude_none=True)
+
+        # TRIGGER_PATH_CHANGE operation.
+        elif op == "trigger_path_change":
+            if not request.session_id:
+                return ManageAgentHooksResponse(
+                    operation=op,
+                    success=False,
+                    error="session_id is required for trigger_path_change operation"
+                ).model_dump_json(indent=2, exclude_none=True)
+            if not request.new_path:
+                return ManageAgentHooksResponse(
+                    operation=op,
+                    success=False,
+                    error="new_path is required for trigger_path_change operation"
+                ).model_dump_json(indent=2, exclude_none=True)
+
+            result = await hook_manager.on_path_changed(
+                request.session_id,
+                request.new_path,
+                request.agent_name
+            )
+            logger.info(
+                f"Triggered path change for {request.session_id}: {result.actions_taken}"
+            )
+
+            return ManageAgentHooksResponse(
+                operation=op,
+                success=True,
+                data=result.to_dict()
+            ).model_dump_json(indent=2, exclude_none=True)
+
+        # GET_STATS operation.
+        elif op == "get_stats":
+            stats = hook_manager.get_stats()
+            return ManageAgentHooksResponse(
+                operation=op,
+                success=True,
+                data=stats
+            ).model_dump_json(indent=2, exclude_none=True)
+
+        # SET_VARIABLE operation - Set iTerm user variable to enable/disable hooks.
+        elif op == "set_variable":
+            if not request.session_id:
+                return ManageAgentHooksResponse(
+                    operation=op,
+                    success=False,
+                    error="session_id is required for set_variable operation"
+                ).model_dump_json(indent=2, exclude_none=True)
+            if not request.variable_name:
+                return ManageAgentHooksResponse(
+                    operation=op,
+                    success=False,
+                    error="variable_name is required for set_variable operation"
+                ).model_dump_json(indent=2, exclude_none=True)
+
+            from core.iterm_path_monitor import set_user_variable
+            connection = ctx.request_context.lifespan_context["connection"]
+            success = await set_user_variable(
+                connection,
+                request.session_id,
+                request.variable_name,
+                request.variable_value or ""
+            )
+            logger.info(
+                f"Set variable {request.variable_name}={request.variable_value} on "
+                f"session {request.session_id}: success={success}"
+            )
+
+            return ManageAgentHooksResponse(
+                operation=op,
+                success=success,
+                data={
+                    "session_id": request.session_id,
+                    "variable_name": request.variable_name,
+                    "variable_value": request.variable_value
+                },
+                error=None if success else "Failed to set variable (session may not exist or iTerm not connected)"
+            ).model_dump_json(indent=2, exclude_none=True)
+
+        # GET_VARIABLE operation - Get iTerm user variable.
+        elif op == "get_variable":
+            if not request.session_id:
+                return ManageAgentHooksResponse(
+                    operation=op,
+                    success=False,
+                    error="session_id is required for get_variable operation"
+                ).model_dump_json(indent=2, exclude_none=True)
+            if not request.variable_name:
+                return ManageAgentHooksResponse(
+                    operation=op,
+                    success=False,
+                    error="variable_name is required for get_variable operation"
+                ).model_dump_json(indent=2, exclude_none=True)
+
+            from core.iterm_path_monitor import get_user_variable
+            connection = ctx.request_context.lifespan_context["connection"]
+            value = await get_user_variable(connection, request.session_id, request.variable_name)
+            logger.info(
+                f"Got variable {request.variable_name} from session {request.session_id}: {value}"
+            )
+
+            return ManageAgentHooksResponse(
+                operation=op,
+                success=True,
+                data={
+                    "session_id": request.session_id,
+                    "variable_name": request.variable_name,
+                    "variable_value": value
+                }
+            ).model_dump_json(indent=2, exclude_none=True)
+
+        else:
+            return ManageAgentHooksResponse(
+                operation=op,
+                success=False,
+                error=f"Unknown operation: {op}"
+            ).model_dump_json(indent=2, exclude_none=True)
+
+    except Exception as e:
+        logger.error(f"Error in manage_agent_hooks ({request.operation}): {e}")
+        return ManageAgentHooksResponse(
+            operation=request.operation,
+            success=False,
+            error=str(e)
+        ).model_dump_json(indent=2, exclude_none=True)
+
+
+class AgentsDispatcher(MethodDispatcher):
+    """Dispatcher for the `agents` collection (SP2 method-semantic)."""
+
+    collection = "agents"
+
+    METHODS = {
+        "GET": {
+            "aliases": ["list", "get", "read", "query"],
+            "params": [
+                "team?",
+                "target='status' | 'notifications' | 'hooks' | 'locks'",
+                "agent? (required for notifications/hooks/locks)",
+                "level?", "limit?", "since?",        # for notifications
+                "hooks_op?", "repo_path?",            # for hooks
+            ],
+            "description": (
+                "List agents (no target), fetch compact status summary "
+                "(target='status'), retrieve notifications, hooks config, "
+                "or locks held by a specific agent."
+            ),
+        },
+        "POST": {
+            "definers": {
+                "CREATE": {
+                    "aliases": ["create", "register", "add"],
+                    "params": [
+                        "agent_name", "session_id",
+                        "team? | teams?=[...]",
+                        "metadata?",
+                    ],
+                    "description": "Register a new agent for a session.",
+                },
+                "SEND": {
+                    "aliases": ["notify", "send", "dispatch"],
+                    "params": [
+                        "target='notifications'",
+                        "agent", "level", "summary",
+                        "context?", "action_hint?",
+                    ],
+                    "description": (
+                        "Send a notification for an agent "
+                        "(target='notifications')."
+                    ),
+                },
+                "TRIGGER": {
+                    "aliases": ["trigger"],
+                    "params": [
+                        "target='hooks'", "hooks_op",
+                        "session_id?", "agent?", "new_path?",
+                        "variable_name?", "variable_value?",
+                    ],
+                    "description": (
+                        "Trigger a hook sub-operation "
+                        "(target='hooks' + hooks_op=...)."
+                    ),
+                },
+            },
+        },
+        "PATCH": {
+            "definers": {
+                "MODIFY": {
+                    "aliases": ["update", "patch", "modify"],
+                    "params": [
+                        "target='hooks'",
+                        "hooks_op?",        # default update_config
+                        "enabled?", "auto_team_assignment?",
+                        "fallback_team_from_repo?", "pass_session_id_default?",
+                        "session_id?", "variable_name?", "variable_value?",
+                    ],
+                    "description": (
+                        "Update hook configuration (global or per-session) — "
+                        "target='hooks', hooks_op='update_config' (default) "
+                        "or 'set_variable'."
+                    ),
+                },
+            },
+        },
+        "DELETE": {
+            "aliases": ["remove", "delete"],
+            "params": [
+                "agent_name",
+            ],
+            "description": "Remove an agent registration.",
+        },
+        "HEAD": {"compact_fields": ["name", "session_id", "teams"]},
+        "OPTIONS": {"description": "Return this schema."},
+    }
+
+    sub_resources = ["status", "notifications", "hooks", "locks"]
+
+    # -------------------------------- GET -------------------------------- #
+
+    async def on_get(self, ctx, **params):
+        """Route GET by `target` — list, status, notifications, hooks, locks."""
+        target = params.get("target")
+        if target == "status":
+            return await self._get_status_summary(ctx, **params)
+        if target == "notifications":
+            return await self._get_notifications(ctx, **params)
+        if target == "hooks":
+            return await self._get_hooks(ctx, **params)
+        if target == "locks":
+            return await self._get_locks(ctx, **params)
+        return await self._list_agents(ctx, **params)
+
+    async def _list_agents(self, ctx, **params):
+        """GET /agents — list registered agents, optionally filtered by team.
+
+        Returns List[Agent] directly so the envelope serializes via Agent's
+        HEAD_FIELDS for HEAD, and the full model for GET.
+        """
+        agent_registry = ctx.request_context.lifespan_context["agent_registry"]
+        logger = ctx.request_context.lifespan_context["logger"]
+
+        team = params.get("team")
+        agents = agent_registry.list_agents(team=team)
+        logger.info(
+            f"agents GET: listed {len(agents)} agents"
+            + (f" in team '{team}'" if team else "")
+        )
+        return agents
+
+    async def _get_status_summary(self, ctx, **params):
+        """GET /agents/status — compact status summary of all agents.
+
+        Returns the formatted string produced by the legacy
+        get_agent_status_summary, preserved verbatim so downstream tooling
+        that parses the formatted output keeps working.
+        """
+        lifespan = ctx.request_context.lifespan_context
+        notification_manager = lifespan["notification_manager"]
+        agent_registry = lifespan["agent_registry"]
+        lock_manager = lifespan.get("tag_lock_manager")
+        logger = lifespan["logger"]
+
+        latest = await notification_manager.get_latest_per_agent()
+
+        # Fill in agents with no notifications.
+        all_agents = agent_registry.list_agents()
+        for agent in all_agents:
+            if agent.name not in latest:
+                latest[agent.name] = AgentNotification(
+                    agent=agent.name,
+                    timestamp=datetime.now(),
+                    level="info",
+                    summary="No activity recorded",
+                )
+
+        notifications = list(latest.values())
+        if not notifications:
+            return "━━━ No notifications ━━━"
+
+        lines = ["━━━ Agent Status ━━━"]
+        for n in notifications:
+            icon = notification_manager.STATUS_ICONS.get(n.level, "?")
+            lock_info = ""
+            if lock_manager:
+                locks = lock_manager.get_locks_by_agent(n.agent)
+                lock_count = len(locks)
+                if lock_count == 0:
+                    lock_info = "[0 locks]"
+                elif lock_count == 1:
+                    lock_info = f"[1 lock: {locks[0][:12]}]"
+                else:
+                    lock_info = f"[{lock_count} locks]"
+            agent_name = n.agent[:12].ljust(12)
+            summary = (
+                n.summary[:20].ljust(20)
+                if len(n.summary) > 20
+                else n.summary.ljust(20)
+            )
+            lines.append(f"{agent_name} {icon} {summary} {lock_info}")
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        formatted = "\n".join(lines)
+
+        logger.info(
+            f"agents GET status: summary for {len(notifications)} agents"
+        )
+        return formatted
+
+    async def _get_notifications(self, ctx, **params):
+        """GET /agents/{name}/notifications — recent notifications.
+
+        Delegates to notification_manager.get with filter params.
+        """
+        notification_manager = ctx.request_context.lifespan_context["notification_manager"]
+        logger = ctx.request_context.lifespan_context["logger"]
+
+        # Build/validate the request; agent is optional (filters to that agent
+        # if provided, but you can also list notifications across all agents).
+        req_kwargs: dict = {}
+        if params.get("agent") is not None:
+            req_kwargs["agent"] = params["agent"]
+        if params.get("level") is not None:
+            req_kwargs["level"] = params["level"]
+        if params.get("limit") is not None:
+            req_kwargs["limit"] = params["limit"]
+        if params.get("since") is not None:
+            req_kwargs["since"] = params["since"]
+
+        req = GetNotificationsRequest.model_validate(req_kwargs)
+        notifications = await notification_manager.get(
+            limit=req.limit,
+            level=req.level,
+            agent=req.agent,
+            since=req.since,
+        )
+        response = GetNotificationsResponse(
+            notifications=notifications,
+            total_count=len(notifications),
+            has_more=len(notifications) == req.limit,
+        )
+        logger.info(
+            f"agents GET notifications: returned {len(notifications)} "
+            f"(agent={req.agent or 'any'})"
+        )
+        return response
+
+    async def _get_hooks(self, ctx, **params):
+        """GET /agents/{name}/hooks — read hook config.
+
+        Delegates to the legacy manage_agent_hooks with operation=get_config
+        (default) or the caller-specified hooks_op. Result is parsed back
+        from JSON since the legacy tool returns a JSON string.
+        """
+        hooks_op = params.get("hooks_op") or "get_config"
+        return await self._run_manage_agent_hooks(ctx, op=hooks_op, **params)
+
+    async def _get_locks(self, ctx, **params):
+        """GET /agents/{name}/locks — list sessions locked by an agent.
+
+        Reuses the same logic as the legacy list_my_locks tool: fetches
+        session IDs from the lock manager, enriches with session names.
+        """
+        lifespan = ctx.request_context.lifespan_context
+        lock_manager = lifespan.get("tag_lock_manager")
+        terminal = lifespan.get("terminal")
+        logger = lifespan["logger"]
+
+        agent = params.get("agent")
+        if not agent:
+            raise ValueError("get locks requires agent=<name>")
+        if not lock_manager:
+            raise RuntimeError("tag_lock_manager not available")
+
+        locked_session_ids = lock_manager.get_locks_by_agent(agent)
+        locks = []
+        for session_id in locked_session_ids:
+            lock_info = lock_manager.get_lock_info(session_id)
+            session_name = None
+            if terminal is not None:
+                try:
+                    session = await terminal.get_session_by_id(session_id)
+                    if session:
+                        session_name = session.name
+                except Exception as e:
+                    logger.debug(
+                        f"Could not get session name for {session_id}: {e}"
+                    )
+            locks.append({
+                "session_id": session_id,
+                "session_name": session_name,
+                "locked_at": (
+                    lock_info.locked_at.isoformat() if lock_info else None
+                ),
+                "pending_requests": (
+                    sorted(lock_info.pending_requests) if lock_info else []
+                ),
+            })
+
+        logger.info(f"agents GET locks: {len(locks)} for agent '{agent}'")
+        return {"agent": agent, "lock_count": len(locks), "locks": locks}
+
+    # ------------------------------- POST -------------------------------- #
+
+    async def on_post(self, ctx, definer, **params):
+        """Route POST by (definer, target) — register, notify, trigger hooks."""
+        target = params.get("target")
+
+        if definer == "CREATE" and not target:
+            return await self._register_agent(ctx, **params)
+
+        if definer == "SEND" and target == "notifications":
+            return await self._notify(ctx, **params)
+
+        if definer == "TRIGGER" and target == "hooks":
+            return await self._trigger_hook(ctx, **params)
+
+        raise NotImplementedError(
+            f"POST+{definer} on target={target!r} not yet implemented"
+        )
+
+    async def _register_agent(self, ctx, **params):
+        """POST /agents (CREATE) — register an agent for a session."""
+        lifespan = ctx.request_context.lifespan_context
+        terminal = lifespan["terminal"]
+        agent_registry = lifespan["agent_registry"]
+        logger = lifespan["logger"]
+
+        agent_name = params.get("agent_name") or params.get("name") or params.get("agent")
+        session_id = params.get("session_id")
+        if not agent_name:
+            raise ValueError("register agent requires agent_name")
+        if not session_id:
+            raise ValueError("register agent requires session_id")
+
+        # `team` is a convenience single-team input; `teams=[...]` is the
+        # authoritative list. Either is accepted.
+        teams = params.get("teams")
+        if teams is None and params.get("team") is not None:
+            teams = [params["team"]]
+        metadata = params.get("metadata")
+
+        # Build and validate via RegisterAgentRequest so any shape checks
+        # (name length, etc.) stay centralized.
+        req = RegisterAgentRequest.model_validate({
+            "name": agent_name,
+            "session_id": session_id,
+            "teams": teams or [],
+            "metadata": metadata or {},
+        })
+
         session = await terminal.get_session_by_id(req.session_id)
-        if not session:
-            return "No matching session found. Provide a valid session_id."
+        if session is None:
+            raise ValueError(
+                f"No matching session found for session_id={req.session_id}"
+            )
 
         agent = agent_registry.register_agent(
             name=req.name,
@@ -43,303 +570,216 @@ async def register_agent(request: RegisterAgentRequest, ctx: Context) -> str:
             teams=req.teams,
             metadata=req.metadata,
         )
-
-        logger.info(f"Registered agent '{agent.name}' for session {session.name}")
-
-        return json.dumps({
+        logger.info(
+            f"agents CREATE: registered agent '{agent.name}' "
+            f"for session {session.name}"
+        )
+        return {
             "agent": agent.name,
             "session_id": agent.session_id,
             "session_name": session.name,
             "teams": agent.teams,
             "metadata": agent.metadata,
-        }, indent=2)
-    except Exception as e:
-        logger.error(f"Error registering agent: {e}")
-        return f"Error: {e}"
+        }
 
+    async def _notify(self, ctx, **params):
+        """POST /agents/{name}/notifications (SEND) — record a notification."""
+        notification_manager = ctx.request_context.lifespan_context["notification_manager"]
+        logger = ctx.request_context.lifespan_context["logger"]
 
-async def list_agents(ctx: Context, team: Optional[str] = None) -> str:
-    """List all registered agents.
+        agent = params.get("agent")
+        level = params.get("level")
+        summary = params.get("summary")
+        if not agent:
+            raise ValueError("notify requires agent=<name>")
+        if not level:
+            raise ValueError("notify requires level")
+        if not summary:
+            raise ValueError("notify requires summary")
 
-    Args:
-        team: Filter by team name (optional)
-    """
-    agent_registry = ctx.request_context.lifespan_context["agent_registry"]
-    logger = ctx.request_context.lifespan_context["logger"]
-
-    try:
-        agents = agent_registry.list_agents(team=team)
-        result = [
-            {
-                "name": a.name,
-                "session_id": a.session_id,
-                "teams": a.teams
-            }
-            for a in agents
-        ]
-
-        logger.info(f"Listed {len(result)} agents" + (f" in team '{team}'" if team else ""))
-        return json.dumps(result, indent=2)
-    except Exception as e:
-        logger.error(f"Error listing agents: {e}")
-        return f"Error: {e}"
-
-
-async def remove_agent(
-    agent_name: str,
-    ctx: Context
-) -> str:
-    """Remove an agent registration.
-
-    Args:
-        agent_name: Name of the agent to remove
-    """
-    agent_registry = ctx.request_context.lifespan_context["agent_registry"]
-    logger = ctx.request_context.lifespan_context["logger"]
-
-    try:
-        if agent_registry.remove_agent(agent_name):
-            logger.info(f"Removed agent '{agent_name}'")
-            return f"Agent '{agent_name}' removed successfully"
-        else:
-            return f"Agent '{agent_name}' not found"
-    except Exception as e:
-        logger.error(f"Error removing agent: {e}")
-        return f"Error: {e}"
-
-
-async def manage_teams(
-    request: ManageTeamsRequest,
-    ctx: Context,
-) -> str:
-    """Manage teams with a single consolidated tool.
-
-    Consolidates: create_team, list_teams, remove_team, assign_agent_to_team, remove_agent_from_team
-
-    Operations:
-    - create: Create a new team (requires team_name)
-    - list: List all teams
-    - remove: Remove a team (requires team_name)
-    - assign_agent: Add an agent to a team (requires team_name and agent_name)
-    - remove_agent: Remove an agent from a team (requires team_name and agent_name)
-
-    Args:
-        request: The team operation request with operation type and parameters
-
-    Returns:
-        JSON with operation results
-    """
-    agent_registry = ctx.request_context.lifespan_context["agent_registry"]
-    profile_manager = ctx.request_context.lifespan_context["profile_manager"]
-    service_hook_manager = ctx.request_context.lifespan_context["service_hook_manager"]
-    logger = ctx.request_context.lifespan_context["logger"]
-
-    try:
-        if request.operation == "create":
-            if not request.team_name:
-                response = ManageTeamsResponse(
-                    operation=request.operation,
-                    success=False,
-                    error="team_name is required for create operation"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            # Check service hooks before creating team
-            hook_result = await service_hook_manager.pre_create_team_hook(
-                team_name=request.team_name,
-                repo_path=request.repo_path
-            )
-
-            # Build response with hook information
-            response_data = {}
-
-            # If hook requires prompt, return the hook result for agent to decide
-            if hook_result.prompt_required:
-                response_data["service_prompt"] = {
-                    "message": hook_result.message,
-                    "inactive_services": [
-                        {
-                            "name": s.name,
-                            "display_name": s.effective_display_name,
-                            "priority": s.priority.value,
-                        }
-                        for s in hook_result.inactive_services
-                    ],
-                    "action_required": True,
-                }
-                logger.info(f"Service hook prompting for team '{request.team_name}': {hook_result.message}")
-
-            # If hook says don't proceed, return error
-            if not hook_result.proceed:
-                response = ManageTeamsResponse(
-                    operation=request.operation,
-                    success=False,
-                    error=hook_result.message,
-                    data={"proceed": False}
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            # Add info about auto-started services
-            if hook_result.auto_started:
-                response_data["auto_started_services"] = [
-                    s.name for s in hook_result.auto_started
-                ]
-
-            team = agent_registry.create_team(
-                name=request.team_name,
-                description=request.description,
-                parent_team=request.parent_team,
-            )
-
-            # Create a profile for the team with auto-assigned color
-            team_profile = profile_manager.get_or_create_team_profile(team.name)
-            profile_manager.save_profiles()
-
-            logger.info(f"Created team '{team.name}' with profile color hue={team_profile.color.hue:.1f}")
-
-            response_data.update({
-                "name": team.name,
-                "description": team.description,
-                "parent_team": team.parent_team,
-                "profile_guid": team_profile.guid,
-                "color_hue": round(team_profile.color.hue, 1)
-            })
-
-            response = ManageTeamsResponse(
-                operation=request.operation,
-                success=True,
-                data=response_data
-            )
-            return response.model_dump_json(indent=2, exclude_none=True)
-
-        elif request.operation == "list":
-            teams = agent_registry.list_teams()
-            result = []
-            for t in teams:
-                team_info = {
-                    "name": t.name,
-                    "description": t.description,
-                    "parent_team": t.parent_team,
-                    "member_count": len(agent_registry.list_agents(team=t.name))
-                }
-                # Include profile info if available
-                team_profile = profile_manager.get_team_profile(t.name)
-                if team_profile:
-                    team_info["profile_guid"] = team_profile.guid
-                    team_info["color_hue"] = round(team_profile.color.hue, 1)
-                result.append(team_info)
-
-            logger.info(f"Listed {len(result)} teams")
-            response = ManageTeamsResponse(
-                operation=request.operation,
-                success=True,
-                data={"teams": result, "count": len(result)}
-            )
-            return response.model_dump_json(indent=2, exclude_none=True)
-
-        elif request.operation == "remove":
-            if not request.team_name:
-                response = ManageTeamsResponse(
-                    operation=request.operation,
-                    success=False,
-                    error="team_name is required for remove operation"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            if agent_registry.remove_team(request.team_name):
-                # Also remove the team's profile
-                profile_removed = profile_manager.remove_team_profile(request.team_name)
-                if profile_removed:
-                    profile_manager.save_profiles()
-                    logger.info(f"Removed team '{request.team_name}' and its profile")
-                else:
-                    logger.info(f"Removed team '{request.team_name}' (no profile to remove)")
-
-                response = ManageTeamsResponse(
-                    operation=request.operation,
-                    success=True,
-                    data={"team_name": request.team_name, "profile_removed": profile_removed}
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-            else:
-                response = ManageTeamsResponse(
-                    operation=request.operation,
-                    success=False,
-                    error=f"Team '{request.team_name}' not found"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-        elif request.operation == "assign_agent":
-            if not request.team_name or not request.agent_name:
-                response = ManageTeamsResponse(
-                    operation=request.operation,
-                    success=False,
-                    error="team_name and agent_name are required for assign_agent operation"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            if agent_registry.assign_to_team(request.agent_name, request.team_name):
-                logger.info(f"Added agent '{request.agent_name}' to team '{request.team_name}'")
-                response = ManageTeamsResponse(
-                    operation=request.operation,
-                    success=True,
-                    data={"team_name": request.team_name, "agent_name": request.agent_name}
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-            else:
-                response = ManageTeamsResponse(
-                    operation=request.operation,
-                    success=False,
-                    error="Failed to add agent to team (agent not found or already member)"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-        elif request.operation == "remove_agent":
-            if not request.team_name or not request.agent_name:
-                response = ManageTeamsResponse(
-                    operation=request.operation,
-                    success=False,
-                    error="team_name and agent_name are required for remove_agent operation"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            if agent_registry.remove_from_team(request.agent_name, request.team_name):
-                logger.info(f"Removed agent '{request.agent_name}' from team '{request.team_name}'")
-                response = ManageTeamsResponse(
-                    operation=request.operation,
-                    success=True,
-                    data={"team_name": request.team_name, "agent_name": request.agent_name}
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-            else:
-                response = ManageTeamsResponse(
-                    operation=request.operation,
-                    success=False,
-                    error="Failed to remove agent from team (agent not found or not a member)"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-        else:
-            response = ManageTeamsResponse(
-                operation=request.operation,
-                success=False,
-                error=f"Unknown operation: {request.operation}"
-            )
-            return response.model_dump_json(indent=2, exclude_none=True)
-
-    except Exception as e:
-        logger.error(f"Error in manage_teams: {e}")
-        response = ManageTeamsResponse(
-            operation=request.operation,
-            success=False,
-            error=str(e)
+        await notification_manager.add_simple(
+            agent=agent,
+            level=level,
+            summary=summary,
+            context=params.get("context"),
+            action_hint=params.get("action_hint"),
         )
-        return response.model_dump_json(indent=2, exclude_none=True)
+        logger.info(
+            f"agents notify: agent={agent} level={level} summary={summary!r}"
+        )
+        return {"agent": agent, "level": level, "added": True}
+
+    async def _trigger_hook(self, ctx, **params):
+        """POST /agents/{name}/hooks (TRIGGER) — execute a hook sub-operation.
+
+        For fire-and-forget-style hooks (trigger_path_change is the main one
+        today). Caller passes `hooks_op` to pick which sub-operation to run.
+        """
+        hooks_op = params.get("hooks_op")
+        if not hooks_op:
+            raise ValueError(
+                "trigger hooks requires hooks_op=<operation>"
+            )
+        return await self._run_manage_agent_hooks(ctx, op=hooks_op, **params)
+
+    # ------------------------------- PATCH ------------------------------- #
+
+    async def on_patch(self, ctx, definer, **params):
+        """Route PATCH by `target` — hooks is the only target today."""
+        target = params.get("target")
+        if target == "hooks":
+            # Default PATCH operation is update_config; callers can override
+            # (e.g. hooks_op='set_variable' to mutate a session variable).
+            hooks_op = params.get("hooks_op") or "update_config"
+            return await self._run_manage_agent_hooks(ctx, op=hooks_op, **params)
+
+        raise NotImplementedError(
+            f"PATCH target={target!r} not yet implemented"
+        )
+
+    # ------------------------------- DELETE ------------------------------ #
+
+    async def on_delete(self, ctx, **params):
+        """DELETE /agents/{name} — remove an agent registration."""
+        agent_registry = ctx.request_context.lifespan_context["agent_registry"]
+        logger = ctx.request_context.lifespan_context["logger"]
+
+        agent_name = (
+            params.get("agent_name")
+            or params.get("name")
+            or params.get("agent")
+        )
+        if not agent_name:
+            raise ValueError("delete agent requires agent_name")
+
+        removed = agent_registry.remove_agent(agent_name)
+        logger.info(
+            f"agents DELETE: removed agent '{agent_name}'"
+            if removed
+            else f"agents DELETE: agent '{agent_name}' not found"
+        )
+        return {"agent": agent_name, "removed": bool(removed)}
+
+    # -------------------- shared helper: manage_agent_hooks --------------- #
+
+    async def _run_manage_agent_hooks(self, ctx, *, op: str, **params):
+        """Thin wrapper around the module-local ``_manage_agent_hooks``.
+
+        Builds a ManageAgentHooksRequest, delegates to the helper, and
+        re-parses its JSON response into a native dict. This keeps all
+        per-op validation and error handling behind one surface.
+
+        The v2 ``agent`` param is mapped to the request's ``agent_name`` field.
+        """
+        req_kwargs: dict = {"operation": op}
+
+        # Per-op inputs — only forward the ones the legacy request model knows.
+        fields = (
+            "enabled", "auto_team_assignment", "fallback_team_from_repo",
+            "pass_session_id_default", "repo_path", "session_id",
+            "new_path", "variable_name", "variable_value",
+        )
+        for key in fields:
+            if params.get(key) is not None:
+                req_kwargs[key] = params[key]
+        # v2 exposes the agent as "agent"; the legacy model calls it "agent_name".
+        if params.get("agent") is not None:
+            req_kwargs.setdefault("agent_name", params["agent"])
+
+        request = ManageAgentHooksRequest.model_validate(req_kwargs)
+        result_json = await _manage_agent_hooks(request, ctx)
+        # _manage_agent_hooks always returns a JSON string of ManageAgentHooksResponse.
+        return json.loads(result_json)
+
+
+_dispatcher = AgentsDispatcher()
+
+
+async def agents(
+    ctx: Context,
+    op: str = "GET",
+    definer: Optional[str] = None,
+    # Routing.
+    target: Optional[str] = None,
+    # Core agent identity / filters.
+    agent: Optional[str] = None,          # name for notifications/hooks/locks
+    agent_name: Optional[str] = None,     # alias for register/remove
+    session_id: Optional[str] = None,
+    team: Optional[str] = None,
+    teams: Optional[List[str]] = None,
+    metadata: Optional[dict] = None,
+    # Notifications.
+    level: Optional[str] = None,
+    summary: Optional[str] = None,
+    context: Optional[str] = None,
+    action_hint: Optional[str] = None,
+    limit: Optional[int] = None,
+    since: Optional[str] = None,
+    # Hooks.
+    hooks_op: Optional[str] = None,
+    enabled: Optional[bool] = None,
+    auto_team_assignment: Optional[bool] = None,
+    fallback_team_from_repo: Optional[bool] = None,
+    pass_session_id_default: Optional[bool] = None,
+    repo_path: Optional[str] = None,
+    new_path: Optional[str] = None,
+    variable_name: Optional[str] = None,
+    variable_value: Optional[str] = None,
+) -> str:
+    """Agent operations: list, register, remove, notify, status, notifications,
+    hooks, locks, HEAD, OPTIONS.
+
+    Use op="list" (or op="GET") to list registered agents (optionally team-filtered).
+    Use op="GET" + target="status" for a compact multi-agent status summary.
+    Use op="GET" + target="notifications" (+ agent?) to fetch notifications.
+    Use op="GET" + target="hooks" (+ hooks_op?) to read hook config.
+    Use op="GET" + target="locks" + agent=... to list sessions locked by that agent.
+    Use op="register" (or op="POST" + definer="CREATE") + agent_name + session_id
+      (+ team?/teams?/metadata?) to register an agent.
+    Use op="notify" (or op="POST" + definer="SEND") + target="notifications"
+      + agent + level + summary (+ context?/action_hint?) to add a notification.
+    Use op="trigger" (or op="POST" + definer="TRIGGER") + target="hooks"
+      + hooks_op=... to run a hook sub-operation (e.g. trigger_path_change).
+    Use op="update" (or op="PATCH") + target="hooks" (+ hooks_op?) to update
+      hook config (default op is update_config).
+    Use op="delete" (or op="DELETE") + agent_name to remove an agent.
+    Use op="HEAD" (or "peek"/"summary") for a compact list.
+    Use op="OPTIONS" (or "schema"/"discover") to discover the tool's surface.
+
+    This is SP2's second method-semantic collection tool. It coexists with
+    the legacy per-verb agent tools (register_agent, list_agents,
+    remove_agent, notify, get_notifications, get_agent_status_summary,
+    manage_agent_hooks, list_my_locks) and will eventually replace them.
+    """
+    raw_params = {
+        "target": target,
+        "agent": agent,
+        "agent_name": agent_name,
+        "session_id": session_id,
+        "team": team,
+        "teams": teams,
+        "metadata": metadata,
+        "level": level,
+        "summary": summary,
+        "context": context,
+        "action_hint": action_hint,
+        "limit": limit,
+        "since": since,
+        "hooks_op": hooks_op,
+        "enabled": enabled,
+        "auto_team_assignment": auto_team_assignment,
+        "fallback_team_from_repo": fallback_team_from_repo,
+        "pass_session_id_default": pass_session_id_default,
+        "repo_path": repo_path,
+        "new_path": new_path,
+        "variable_name": variable_name,
+        "variable_value": variable_value,
+    }
+    params = {k: v for k, v in raw_params.items() if v is not None}
+
+    return await _dispatcher.dispatch(ctx=ctx, op=op, definer=definer, **params)
 
 
 def register(mcp):
-    """Register agent and team management tools with the FastMCP instance."""
-    mcp.tool()(register_agent)
-    mcp.tool()(list_agents)
-    mcp.tool()(remove_agent)
-    mcp.tool()(manage_teams)
+    """Register the agents dispatcher tool."""
+    mcp.tool(name="agents")(agents)
