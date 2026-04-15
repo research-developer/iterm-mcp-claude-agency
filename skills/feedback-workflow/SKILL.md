@@ -7,12 +7,37 @@ description: >
 
 ## iTerm Feedback Workflow
 
-Tools for the feedback lifecycle:
+All feedback operations go through a single `feedback` tool using WebSpec
+method semantics. For the live schema call `feedback(op="OPTIONS")`.
 
-- **submit_feedback** — Submit bug reports, enhancements, UX issues
-- **query_feedback** — Search feedback by status, category, agent
-- **check_feedback_triggers** — Automatic feedback trigger detection
-- **fork_for_feedback** — Create isolated git worktree for testing fixes
-- **triage_feedback_to_github** — Create GitHub issues from feedback
-- **notify_feedback_update** — Notify agents about feedback status changes
-- **get_feedback_config** — View/update feedback trigger configuration
+### Submitting feedback
+
+- `feedback(op="submit", title="...", description="...", category="bug")` — submit
+  feedback (aliases: `op="POST"` + `definer="CREATE"`, or `op="create"`)
+  - Optional: `agent_name`, `session_id`, `reproduction_steps`,
+    `suggested_improvement`, `error_messages`
+
+### Querying
+
+- `feedback(op="list")` — list feedback entries (aliases: `op="GET"`, `op="query"`)
+  - Optional filters: `status`, `category`, `agent_name`, `limit`
+- `feedback(op="GET", target="config")` — view feedback trigger configuration
+- `feedback(op="PATCH", target="config", ...)` — update feedback trigger config
+
+### Triage and forking
+
+- `feedback(op="triage", target="issues", feedback_id="fbk-123")` — create a
+  GitHub issue from a feedback entry (aliases: `op="POST"` + `definer="SEND"`)
+- `feedback(op="fork", target="worktrees", feedback_id="fbk-123",
+  session_id="sid")` — fork a git worktree for isolated testing
+
+### Triggers
+
+- `feedback(op="invoke", target="triggers", agent_name="alice", session_id="sid")` —
+  record an event and check whether auto-feedback triggers should fire.
+  Optional: `error_message`, `tool_call_name`, `output_text`.
+
+### Notifications
+
+- `feedback(op="notify", target="notifications", feedback_id="fbk-123")` — notify
+  the submitting agent about a feedback status update
