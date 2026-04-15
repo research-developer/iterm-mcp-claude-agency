@@ -924,6 +924,132 @@ async def create_sessions(request: CreateSessionsRequest, ctx: Context) -> str:
         return f"Error: {e}"
 
 
+async def _split_session_core(
+    split_request: SplitSessionRequest,
+    terminal,
+    agent_registry,
+    role_manager: RoleManager,
+    logger,
+    profile_manager=None,
+) -> SplitSessionResponse:
+    """Core split logic shared by split_session and sessions_v2.
+
+    Creates a new pane by splitting an existing session, registers an agent
+    if requested, applies team colors, optionally launches an AI agent CLI,
+    starts monitoring, and assigns a role. Returns the SplitSessionResponse.
+
+    Raises:
+        ValueError: When the target session can't be found or matches
+            multiple sessions ambiguously.
+    """
+    # Resolve the target session
+    target_sessions = await resolve_target_sessions(
+        terminal, agent_registry, [split_request.target]
+    )
+
+    if not target_sessions:
+        raise ValueError(
+            f"Target session not found: {split_request.target.model_dump()}"
+        )
+
+    if len(target_sessions) > 1:
+        matched_ids = [s.id for s in target_sessions]
+        raise ValueError(
+            f"Ambiguous target: multiple sessions matched {matched_ids}. "
+            "Please be more specific."
+        )
+
+    source_session = target_sessions[0]
+
+    # Create the split pane
+    new_session = await terminal.split_session_directional(
+        session_id=source_session.id,
+        direction=split_request.direction,
+        name=split_request.name,
+        profile=split_request.profile
+    )
+
+    agent_name = None
+    team_name = split_request.team
+
+    # Register agent if specified
+    if split_request.agent:
+        teams = [team_name] if team_name else []
+        agent_registry.register_agent(
+            name=split_request.agent,
+            session_id=new_session.id,
+            teams=teams,
+        )
+        agent_name = split_request.agent
+
+        # Apply team profile colors if agent is in a team
+        if team_name and profile_manager:
+            team_profile = profile_manager.get_or_create_team_profile(team_name)
+            profile_manager.save_profiles()
+            # Apply the team's tab color to the session
+            r, g, b = team_profile.color.to_rgb()
+            try:
+                import iterm2
+                await new_session.session.async_set_profile_properties(
+                    iterm2.LocalWriteOnlyProfile(
+                        values={
+                            "Tab Color": {
+                                "Red Component": r,
+                                "Green Component": g,
+                                "Blue Component": b,
+                                "Color Space": "sRGB"
+                            }
+                        }
+                    )
+                )
+                logger.debug(f"Applied team '{team_name}' color to split session {new_session.name}")
+            except Exception as e:
+                logger.warning(f"Could not apply team color to session: {e}")
+
+    # Launch AI agent CLI if agent_type specified
+    if split_request.agent_type:
+        cli_command = AGENT_CLI_COMMANDS.get(split_request.agent_type)
+        if cli_command:
+            logger.info(f"Launching {split_request.agent_type} agent in split session {new_session.name}: {cli_command}")
+            await new_session.execute_command(cli_command)
+        else:
+            logger.warning(f"Unknown agent type: {split_request.agent_type}")
+    elif split_request.command:
+        # Only run custom command if no agent_type (agent_type takes precedence)
+        await new_session.execute_command(split_request.command)
+
+    # Start monitoring if requested
+    if split_request.monitor:
+        await new_session.start_monitoring(update_interval=0.2)
+
+    # Assign role if specified
+    assigned_role = None
+    if split_request.role:
+        try:
+            role_manager.assign_role(
+                session_id=new_session.id,
+                role=split_request.role,
+                role_config=split_request.role_config,
+            )
+            assigned_role = split_request.role.value
+            logger.info(f"Assigned role '{assigned_role}' to split session {new_session.id}")
+        except Exception as e:
+            logger.warning(f"Could not assign role to split session: {e}")
+
+    response = SplitSessionResponse(
+        session_id=new_session.id,
+        name=new_session.name,
+        agent=agent_name,
+        persistent_id=new_session.persistent_id or "",
+        source_session_id=source_session.id,
+        direction=split_request.direction,
+        role=assigned_role,
+    )
+
+    logger.info(f"Split session {source_session.id} ({split_request.direction}) -> {new_session.id}")
+    return response
+
+
 async def split_session(request: SplitSessionRequest, ctx: Context) -> str:
     """Split an existing session in a specific direction, creating a new pane.
 
@@ -947,112 +1073,27 @@ async def split_session(request: SplitSessionRequest, ctx: Context) -> str:
 
     try:
         split_request = _ensure_model(SplitSessionRequest, request)
-
-        # Resolve the target session
-        target_sessions = await resolve_target_sessions(
-            terminal, agent_registry, [split_request.target]
-        )
-
-        if not target_sessions:
-            return json.dumps({
-                "error": "Target session not found",
-                "target": split_request.target.model_dump()
-            }, indent=2)
-
-        if len(target_sessions) > 1:
-            return json.dumps({
-                "error": "Ambiguous target: multiple sessions matched. Please be more specific.",
-                "matched_sessions": [s.id for s in target_sessions]
-            }, indent=2)
-
-        source_session = target_sessions[0]
-
-        # Create the split pane
-        new_session = await terminal.split_session_directional(
-            session_id=source_session.id,
-            direction=split_request.direction,
-            name=split_request.name,
-            profile=split_request.profile
-        )
-
-        agent_name = None
-        team_name = split_request.team
-
-        # Register agent if specified
-        if split_request.agent:
-            teams = [team_name] if team_name else []
-            agent_registry.register_agent(
-                name=split_request.agent,
-                session_id=new_session.id,
-                teams=teams,
+        try:
+            response = await _split_session_core(
+                split_request,
+                terminal,
+                agent_registry,
+                role_manager,
+                logger,
+                profile_manager=profile_manager,
             )
-            agent_name = split_request.agent
+        except ValueError as ve:
+            # Preserve legacy error-shape for the tool wrapper.
+            msg = str(ve)
+            if "Ambiguous target" in msg:
+                return json.dumps({"error": msg}, indent=2)
+            if "Target session not found" in msg:
+                return json.dumps({
+                    "error": "Target session not found",
+                    "target": split_request.target.model_dump(),
+                }, indent=2)
+            return json.dumps({"error": msg}, indent=2)
 
-            # Apply team profile colors if agent is in a team
-            if team_name and profile_manager:
-                team_profile = profile_manager.get_or_create_team_profile(team_name)
-                profile_manager.save_profiles()
-                # Apply the team's tab color to the session
-                r, g, b = team_profile.color.to_rgb()
-                try:
-                    import iterm2
-                    await new_session.session.async_set_profile_properties(
-                        iterm2.LocalWriteOnlyProfile(
-                            values={
-                                "Tab Color": {
-                                    "Red Component": r,
-                                    "Green Component": g,
-                                    "Blue Component": b,
-                                    "Color Space": "sRGB"
-                                }
-                            }
-                        )
-                    )
-                    logger.debug(f"Applied team '{team_name}' color to split session {new_session.name}")
-                except Exception as e:
-                    logger.warning(f"Could not apply team color to session: {e}")
-
-        # Launch AI agent CLI if agent_type specified
-        if split_request.agent_type:
-            cli_command = AGENT_CLI_COMMANDS.get(split_request.agent_type)
-            if cli_command:
-                logger.info(f"Launching {split_request.agent_type} agent in split session {new_session.name}: {cli_command}")
-                await new_session.execute_command(cli_command)
-            else:
-                logger.warning(f"Unknown agent type: {split_request.agent_type}")
-        elif split_request.command:
-            # Only run custom command if no agent_type (agent_type takes precedence)
-            await new_session.execute_command(split_request.command)
-
-        # Start monitoring if requested
-        if split_request.monitor:
-            await new_session.start_monitoring(update_interval=0.2)
-
-        # Assign role if specified
-        assigned_role = None
-        if split_request.role:
-            try:
-                role_manager.assign_role(
-                    session_id=new_session.id,
-                    role=split_request.role,
-                    role_config=split_request.role_config,
-                )
-                assigned_role = split_request.role.value
-                logger.info(f"Assigned role '{assigned_role}' to split session {new_session.id}")
-            except Exception as e:
-                logger.warning(f"Could not assign role to split session: {e}")
-
-        response = SplitSessionResponse(
-            session_id=new_session.id,
-            name=new_session.name,
-            agent=agent_name,
-            persistent_id=new_session.persistent_id or "",
-            source_session_id=source_session.id,
-            direction=split_request.direction,
-            role=assigned_role
-        )
-
-        logger.info(f"Split session {source_session.id} ({split_request.direction}) -> {new_session.id}")
         return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:

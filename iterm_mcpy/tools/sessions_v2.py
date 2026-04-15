@@ -1,29 +1,32 @@
-"""SP2 method-semantic `sessions_v2` tool — Tasks 4a + 4b + 4c + 4d.
+"""SP2 method-semantic `sessions_v2` tool — Tasks 4a + 4b + 4c + 4d + 4e.
 
 This module introduces the first collection tool built on the
 MethodDispatcher base class. It currently implements:
 
-    GET     — list/filter sessions (delegates to _list_sessions_core)
-              OR read terminal output when target="output"
+    GET     — list/filter sessions (delegates to _list_sessions_core),
+              read terminal output when target="output", or return
+              processing state when target="status".
     HEAD    — compact projection of GET (auto via HEAD_FIELDS)
     OPTIONS — self-describing schema (auto)
     POST + CREATE — create new sessions from a layout
-              (delegates to execute_create_sessions)
+              (delegates to execute_create_sessions), or split an
+              existing pane when target="splits".
     POST + SEND   — write to session(s) when target="output"
               (delegates to execute_write_request)
               OR send control char / special key when target="keys"
               (unifies old send_control_character / send_special_key)
+    POST + TRIGGER — start monitoring a session when target="monitoring"
+              (delegates to _start_monitoring_core).
     PATCH   — update sub-resources: tags (MODIFY replaces, APPEND adds),
-              roles (assign), locks (acquire / request access), or the
-              session itself (target='active' + focus=true). Replaces
-              set_session_tags, assign_session_role, manage_session_lock
-              (lock / request_access), and set_active_session.
-    DELETE  — remove sub-resources: roles (removes assignment) or locks
-              (releases the lock). Replaces remove_session_role and
-              manage_session_lock (unlock).
-
-Remaining sub-resources (monitoring, splits, status) and the remaining
-POST/PUT definers are implemented in subsequent SP2 tasks (4e).
+              roles (assign), locks (acquire / request access), the
+              session itself (target='active' + focus=true), or
+              appearance/modifications (target='appearance' or None)
+              covering colors, suspend/resume, badge, and focus cooldown.
+              Replaces set_session_tags, assign_session_role,
+              manage_session_lock (lock / request_access),
+              set_active_session, and modify_sessions.
+    DELETE  — remove sub-resources: roles (removes assignment), locks
+              (releases the lock), or monitoring (stops the monitor).
 
 The tool is registered under the provisional name ``sessions_v2`` so it
 coexists with the 17 legacy session-related tools. The final cutover
@@ -48,7 +51,11 @@ from iterm_mcpy.helpers import (
     execute_write_request,
     resolve_session,
 )
-from iterm_mcpy.tools.sessions import _list_sessions_core
+from iterm_mcpy.tools.sessions import _list_sessions_core, _split_session_core
+from iterm_mcpy.tools.monitoring import (
+    _start_monitoring_core,
+    _stop_monitoring_core,
+)
 
 
 # Parameters that _list_sessions_core accepts. Anything outside this set is
@@ -84,15 +91,26 @@ class SessionsDispatcher(MethodDispatcher):
                 "target?",
                 "targets?",
                 "max_lines?", "strip_ansi?", "parallel?",
+                "target='status'",
             ],
-            "description": "List sessions or read output (target='output').",
+            "description": (
+                "List sessions (no target), read output (target='output'), "
+                "or fetch session status (target='status')."
+            ),
         },
         "POST": {
             "definers": {
                 "CREATE": {
-                    "aliases": ["create"],
-                    "params": ["layout", "sessions", "register_agents?", "shell?"],
-                    "description": "Create new sessions from a layout.",
+                    "aliases": ["create", "split"],
+                    "params": [
+                        "layout", "sessions", "register_agents?", "shell?",
+                        "target='splits' + direction='below'|'above'|'left'|'right' + session_id",
+                        "name?", "agent?", "team?", "register_agent?",
+                    ],
+                    "description": (
+                        "Create sessions (no target) or split an existing "
+                        "session (target='splits')."
+                    ),
                 },
                 "SEND": {
                     "aliases": ["send", "write", "dispatch"],
@@ -109,6 +127,15 @@ class SessionsDispatcher(MethodDispatcher):
                         "target='keys' -> control char or named special key."
                     ),
                 },
+                "TRIGGER": {
+                    "aliases": ["start", "trigger", "monitor"],
+                    "params": [
+                        "target='monitoring'",
+                        "session_id | agent | name",
+                        "enable_event_bus?",
+                    ],
+                    "description": "Start monitoring a session (target='monitoring').",
+                },
             },
         },
         "PATCH": {
@@ -116,7 +143,10 @@ class SessionsDispatcher(MethodDispatcher):
                 "MODIFY": {
                     "aliases": ["update", "patch", "assign"],
                     "params": [
-                        "target='tags' | 'roles' | 'locks' | 'active' (default)",
+                        (
+                            "target='tags' | 'roles' | 'locks' | 'active' | "
+                            "'appearance' | None (default appearance/focus)"
+                        ),
                         "session_id",
                         # tags:
                         "tags?=[...]",
@@ -124,10 +154,16 @@ class SessionsDispatcher(MethodDispatcher):
                         "role?", "assigned_by?",
                         # locks:
                         "agent?", "action?='lock'|'request_access'",
-                        # active:
-                        "focus?=true",
+                        # active / appearance:
+                        "focus?", "suspended?", "tab_color?", "cursor_color?",
+                        "background_color?", "tab_color_enabled?", "badge?",
+                        "name?", "reset?",
                     ],
-                    "description": "Update session fields or sub-resources.",
+                    "description": (
+                        "Update session fields or sub-resources, including "
+                        "appearance (colors/badge), suspend/resume, focus, "
+                        "and active state."
+                    ),
                 },
                 "APPEND": {
                     "aliases": ["append"],
@@ -141,28 +177,37 @@ class SessionsDispatcher(MethodDispatcher):
             },
         },
         "DELETE": {
-            "aliases": ["remove", "unlock"],
+            "aliases": ["remove", "unlock", "stop"],
             "params": [
-                "target='roles' | 'locks'",
+                "target='roles' | 'locks' | 'monitoring'",
                 "session_id",
                 # locks:
                 "agent?",
                 # roles:
                 "removed_by?",
+                # monitoring: session_id|agent|name (no body)
             ],
-            "description": "Remove role assignment or release a session lock.",
+            "description": (
+                "Remove role assignment, release a session lock, or stop "
+                "monitoring a session (target='monitoring')."
+            ),
         },
         "HEAD": {"compact_fields": ["session_id", "name", "agent", "is_processing", "locked"]},
         "OPTIONS": {"description": "Return this schema."},
     }
 
-    sub_resources = ["output", "status", "tags", "locks", "roles", "monitoring", "splits", "keys", "active"]
+    sub_resources = [
+        "output", "status", "tags", "locks", "roles", "monitoring",
+        "splits", "keys", "appearance", "active",
+    ]
 
     async def on_get(self, ctx, **params):
-        """Route GET by `target` — list sessions (default) or read output."""
+        """Route GET by `target` — list sessions, read output, or get status."""
         target = params.get("target")
         if target == "output":
             return await self._get_output(ctx, **params)
+        if target == "status":
+            return await self._get_status(ctx, **params)
         return await self._list_sessions(ctx, **params)
 
     async def _list_sessions(self, ctx, **params):
@@ -218,17 +263,23 @@ class SessionsDispatcher(MethodDispatcher):
         return await execute_read_request(request, terminal, agent_registry, logger)
 
     async def on_post(self, ctx, definer, **params):
-        """Route POST by `(definer, target)` — create sessions, write output, send keys."""
+        """Route POST by `(definer, target)` — create, split, write, send keys, monitor."""
         target = params.get("target")
 
         if definer == "CREATE" and not target:
             return await self._create_sessions(ctx, **params)
+
+        if definer == "CREATE" and target == "splits":
+            return await self._create_split(ctx, **params)
 
         if definer == "SEND" and target == "output":
             return await self._write_output(ctx, **params)
 
         if definer == "SEND" and target == "keys":
             return await self._send_keys(ctx, **params)
+
+        if definer == "TRIGGER" and target == "monitoring":
+            return await self._start_monitoring(ctx, **params)
 
         raise NotImplementedError(
             f"POST+{definer} on target={target!r} not yet implemented"
@@ -396,14 +447,15 @@ class SessionsDispatcher(MethodDispatcher):
         if target == "locks":
             return await self._patch_locks(ctx, definer, **params)
 
-        if target == "active" or target is None:
-            # PATCH on the session itself (e.g., set active/focus).
+        # PATCH on the session itself — appearance (target='appearance'),
+        # active/focus (target='active'), or default (target=None).
+        if target in (None, "active", "appearance"):
             return await self._patch_session(ctx, definer, **params)
 
         raise NotImplementedError(f"PATCH target={target!r} not yet implemented")
 
     async def on_delete(self, ctx, **params):
-        """Route DELETE by `target` — roles or locks (no whole-session DELETE yet)."""
+        """Route DELETE by `target` — roles, locks, or monitoring."""
         target = params.get("target")
 
         if target == "roles":
@@ -411,6 +463,9 @@ class SessionsDispatcher(MethodDispatcher):
 
         if target == "locks":
             return await self._delete_lock(ctx, **params)
+
+        if target == "monitoring":
+            return await self._stop_monitoring(ctx, **params)
 
         # DELETE on the session itself is NOT supported in SP2 (there was no
         # legacy remove_session tool). Reserved for a future task.
@@ -436,23 +491,94 @@ class SessionsDispatcher(MethodDispatcher):
         return {"session_id": session_id, "tags": updated, "appended": append}
 
     async def _patch_session(self, ctx, definer, **params):
-        """PATCH on a session — e.g., focus/activate."""
+        """PATCH on a session — focus/activate, appearance, suspend/resume.
+
+        Routes:
+          - target='active' + focus=True → terminal.focus_session(session_id)
+            (fast-path preserved for back-compat with Task 4d tests).
+          - target='appearance' or target=None with any appearance/process
+            modification fields → delegates to `_apply_session_modification`
+            from `iterm_mcpy.tools.modifications`.
+        """
         session_id = params.get("session_id")
         if not session_id:
             raise ValueError("patch session requires session_id")
 
+        target = params.get("target")
         focus = params.get("focus")
-        if focus is not True:
-            # Only thing supported in 4d is setting active/focus. Everything
-            # else (appearance, monitoring) is reserved for later tasks.
-            raise NotImplementedError(
-                "patch session: only focus=true supported in this task"
-            )
 
         lifespan = ctx.request_context.lifespan_context
         terminal = lifespan["terminal"]
-        await terminal.focus_session(session_id)
-        return {"session_id": session_id, "focused": True}
+
+        # Collect the set of modification fields the caller actually passed.
+        # These are the attributes understood by SessionModification.
+        modification_fields = (
+            "set_active", "focus", "suspend", "resume", "suspend_by",
+            "background_color", "tab_color", "tab_color_enabled",
+            "cursor_color", "badge", "reset",
+        )
+        # Map our tool-level `suspended` flag onto the model's suspend/resume
+        # pair before looking at the rest of the fields. This is a small
+        # convenience so callers can say `suspended=True` / `suspended=False`
+        # rather than picking between suspend= and resume=.
+        if "suspended" in params and "suspend" not in params and "resume" not in params:
+            if params["suspended"]:
+                params["suspend"] = True
+            else:
+                params["resume"] = True
+
+        passed_mods = {
+            k: params[k] for k in modification_fields if k in params
+        }
+
+        # Fast path: target='active' + focus=True with no other modification
+        # fields — preserve the Task 4d lightweight response.
+        if (
+            target == "active"
+            and focus is True
+            and len(passed_mods) == 1
+        ):
+            await terminal.focus_session(session_id)
+            return {"session_id": session_id, "focused": True}
+
+        # Without any modification fields and without an explicit target, the
+        # request is a no-op — surface NotImplemented as in 4d.
+        if not passed_mods and target in (None, "active"):
+            raise NotImplementedError(
+                "patch session: no modification fields provided"
+            )
+
+        # Otherwise delegate to the legacy _apply_session_modification helper.
+        from core.models import SessionModification
+        from iterm_mcpy.tools.modifications import _apply_session_modification
+
+        agent_registry = lifespan["agent_registry"]
+        focus_cooldown = lifespan.get("focus_cooldown")
+        logger = lifespan["logger"]
+
+        # Build a SessionModification. Identity always comes from session_id
+        # (sessions_v2 is session-centric; the modification helper itself
+        # resolves session_id -> session).
+        mod_kwargs = {"session_id": session_id}
+        # Forward supported fields. Use model_validate so Pydantic handles
+        # nested ColorSpec dicts (tab_color/cursor_color/background_color).
+        for key in modification_fields:
+            if key in params:
+                mod_kwargs[key] = params[key]
+
+        modification = SessionModification.model_validate(mod_kwargs)
+
+        sessions = await resolve_session(
+            terminal, agent_registry, session_id=session_id,
+        )
+        if not sessions:
+            raise ValueError(f"patch session: no session found with id={session_id}")
+
+        session = sessions[0]
+        result = await _apply_session_modification(
+            session, modification, terminal, agent_registry, logger, focus_cooldown,
+        )
+        return result
 
     async def _patch_roles(self, ctx, definer, **params):
         """PATCH /sessions/{id}/roles — assign a role."""
@@ -545,6 +671,190 @@ class SessionsDispatcher(MethodDispatcher):
         success = lock_manager.unlock_session(session_id, agent)
         return {"session_id": session_id, "agent": agent, "unlocked": success}
 
+    # ---------------------- Status / splits / monitoring (Task 4e) ---- #
+
+    async def _get_status(self, ctx, **params):
+        """GET /sessions/{id}/status — returns processing state.
+
+        Replaces the legacy ``check_session_status`` tool. Resolves the target
+        session (by session_id / agent / name) and returns a compact status
+        record per match.
+        """
+        session_id = params.get("session_id")
+        name = params.get("name")
+        agent = params.get("agent")
+        if not any([session_id, name, agent]):
+            raise ValueError(
+                "get status requires at least one of: session_id, name, agent"
+            )
+
+        lifespan = ctx.request_context.lifespan_context
+        terminal = lifespan["terminal"]
+        agent_registry = lifespan["agent_registry"]
+        lock_manager = lifespan.get("tag_lock_manager")
+
+        sessions = await resolve_session(
+            terminal, agent_registry,
+            session_id=session_id, name=name, agent=agent,
+        )
+        if not sessions:
+            raise ValueError("get status: no matching session found")
+
+        active_id = getattr(agent_registry, "active_session", None)
+
+        statuses = []
+        for s in sessions:
+            agent_obj = agent_registry.get_agent_by_session(s.id)
+            status: dict = {
+                "session_id": s.id,
+                "name": s.name,
+                "persistent_id": getattr(s, "persistent_id", None),
+                "agent": agent_obj.name if agent_obj else None,
+                "teams": agent_obj.teams if agent_obj else [],
+                "is_processing": getattr(s, "is_processing", False),
+                "is_monitoring": getattr(s, "is_monitoring", False),
+                "is_active": s.id == active_id,
+                "suspended": getattr(s, "is_suspended", False),
+            }
+            if lock_manager is not None:
+                lock_info = lock_manager.get_lock_info(s.id)
+                status["tags"] = lock_manager.get_tags(s.id)
+                status["locked"] = lock_info is not None
+                status["locked_by"] = lock_info.owner if lock_info else None
+                status["locked_at"] = (
+                    lock_info.locked_at.isoformat() if lock_info else None
+                )
+                status["pending_access_requests"] = (
+                    len(lock_info.pending_requests) if lock_info else 0
+                )
+            statuses.append(status)
+
+        return statuses
+
+    async def _create_split(self, ctx, **params):
+        """POST /sessions/{id}/splits (CREATE) — split a pane.
+
+        Replaces the legacy ``split_session`` tool. Delegates to the shared
+        ``_split_session_core`` helper in ``iterm_mcpy.tools.sessions``.
+        """
+        from core.models import SplitSessionRequest
+
+        session_id = params.get("session_id")
+        if not session_id:
+            raise ValueError("create split requires session_id")
+
+        direction = params.get("direction", "below")
+
+        lifespan = ctx.request_context.lifespan_context
+        terminal = lifespan["terminal"]
+        agent_registry = lifespan["agent_registry"]
+        role_manager = lifespan["role_manager"]
+        logger = lifespan["logger"]
+        profile_manager = lifespan.get("profile_manager")
+
+        # Build SessionTarget from the scalar session_id (the dispatcher surface
+        # is identity-by-id, not the legacy nested target object).
+        request_kwargs: dict = {
+            "target": {"session_id": session_id},
+            "direction": direction,
+        }
+        for key in (
+            "name", "profile", "command", "agent", "agent_type",
+            "team", "monitor", "role", "role_config",
+        ):
+            if key in params:
+                request_kwargs[key] = params[key]
+
+        split_request = SplitSessionRequest.model_validate(request_kwargs)
+
+        response = await _split_session_core(
+            split_request,
+            terminal,
+            agent_registry,
+            role_manager,
+            logger,
+            profile_manager=profile_manager,
+        )
+        return response
+
+    async def _start_monitoring(self, ctx, **params):
+        """POST /sessions/{id}/monitoring (TRIGGER) — start monitoring a session."""
+        session_id = params.get("session_id")
+        name = params.get("name")
+        agent = params.get("agent")
+        if not any([session_id, name, agent]):
+            raise ValueError(
+                "start monitoring requires at least one of: session_id, name, agent"
+            )
+
+        lifespan = ctx.request_context.lifespan_context
+        terminal = lifespan["terminal"]
+        agent_registry = lifespan["agent_registry"]
+        event_bus = lifespan.get("event_bus")
+        logger = lifespan["logger"]
+
+        sessions = await resolve_session(
+            terminal, agent_registry,
+            session_id=session_id, name=name, agent=agent,
+        )
+        if not sessions:
+            raise ValueError("start monitoring: no matching session found")
+
+        enable_event_bus = params.get("enable_event_bus", True)
+
+        results = []
+        for session in sessions:
+            started = await _start_monitoring_core(
+                session,
+                event_bus,
+                logger,
+                enable_event_bus=enable_event_bus,
+                # Settle delay mostly matters for the legacy blocking tool;
+                # sessions_v2 returns the result structurally so skip the wait.
+                settle_delay=0,
+            )
+            results.append({
+                "session_id": session.id,
+                "name": session.name,
+                "started": started,
+                "event_bus": enable_event_bus,
+            })
+
+        return {"monitoring": results, "count": len(results)}
+
+    async def _stop_monitoring(self, ctx, **params):
+        """DELETE /sessions/{id}/monitoring — stop monitoring a session."""
+        session_id = params.get("session_id")
+        name = params.get("name")
+        agent = params.get("agent")
+        if not any([session_id, name, agent]):
+            raise ValueError(
+                "stop monitoring requires at least one of: session_id, name, agent"
+            )
+
+        lifespan = ctx.request_context.lifespan_context
+        terminal = lifespan["terminal"]
+        agent_registry = lifespan["agent_registry"]
+        logger = lifespan["logger"]
+
+        sessions = await resolve_session(
+            terminal, agent_registry,
+            session_id=session_id, name=name, agent=agent,
+        )
+        if not sessions:
+            raise ValueError("stop monitoring: no matching session found")
+
+        results = []
+        for session in sessions:
+            stopped = await _stop_monitoring_core(session, logger)
+            results.append({
+                "session_id": session.id,
+                "name": session.name,
+                "stopped": stopped,
+            })
+
+        return {"monitoring": results, "count": len(results)}
+
 
 _dispatcher = SessionsDispatcher()
 
@@ -596,20 +906,47 @@ async def sessions_v2(
     removed_by: Optional[str] = None,
     action: Optional[str] = None,       # "lock" | "request_access" for locks
     focus: Optional[bool] = None,       # for target="active"
+    # NEW for 4e: splits / monitoring / status / appearance (full modify).
+    direction: Optional[str] = None,            # split direction
+    enable_event_bus: Optional[bool] = None,    # monitoring toggle
+    register_agent: Optional[bool] = None,      # (reserved for split / create)
+    # Appearance & process-control modification fields. Pydantic handles nested
+    # dicts for color specs (e.g. tab_color={"red":..,"green":..,"blue":..}).
+    tab_color: Optional[dict] = None,
+    cursor_color: Optional[dict] = None,
+    background_color: Optional[dict] = None,
+    tab_color_enabled: Optional[bool] = None,
+    badge: Optional[str] = None,
+    suspended: Optional[bool] = None,           # shortcut for suspend/resume
+    suspend: Optional[bool] = None,
+    resume: Optional[bool] = None,
+    suspend_by: Optional[str] = None,
+    set_active: Optional[bool] = None,
+    reset: Optional[bool] = None,
 ) -> str:
-    """Session operations: list, read, write, send keys, create, patch, delete, HEAD, OPTIONS.
+    """Session operations: list, read, write, send keys, create, split, monitor,
+    modify, patch, delete, HEAD, OPTIONS.
 
     Use op="list" or op="GET" to list sessions with filters.
     Use op="GET" + target="output" to read terminal output.
+    Use op="GET" + target="status" + session_id=... to fetch processing state.
     Use op="send" (or op="POST" + definer="SEND") + target="output" to write.
     Use op="send" + target="keys" + control_char=... | key=... to send control
       characters or named special keys to session(s).
+    Use op="create" + target="splits" + session_id=... + direction=... to split
+      an existing pane (below/above/left/right).
+    Use op="start" (or op="POST" + definer="TRIGGER") + target="monitoring" to
+      begin real-time output monitoring. Use op="stop" + target="monitoring"
+      (DELETE) to end it.
     Use op="update" (or op="PATCH") + target="tags" to replace tags,
       op="append" + target="tags" to add tags.
     Use op="assign" (or op="PATCH") + target="roles" + role=... to assign a role.
     Use op="update" + target="locks" + agent=... + action="lock"|"request_access"
       to acquire a lock or request access.
     Use op="update" + target="active" + focus=true + session_id=... to focus.
+    Use op="update" + target="appearance" + session_id=... + (tab_color,
+      cursor_color, badge, suspended, reset, ...) to change session visuals
+      and process state.
     Use op="delete" (or op="DELETE") + target="roles" to remove a role.
     Use op="unlock" (or op="DELETE") + target="locks" + agent=... to release a lock.
     Use op="HEAD" (or "peek"/"summary") for a compact list.
@@ -659,6 +996,21 @@ async def sessions_v2(
         "removed_by": removed_by,
         "action": action,
         "focus": focus,
+        # 4e
+        "direction": direction,
+        "enable_event_bus": enable_event_bus,
+        "register_agent": register_agent,
+        "tab_color": tab_color,
+        "cursor_color": cursor_color,
+        "background_color": background_color,
+        "tab_color_enabled": tab_color_enabled,
+        "badge": badge,
+        "suspended": suspended,
+        "suspend": suspend,
+        "resume": resume,
+        "suspend_by": suspend_by,
+        "set_active": set_active,
+        "reset": reset,
     }
     params = {k: v for k, v in raw_params.items() if v is not None}
 

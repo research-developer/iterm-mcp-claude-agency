@@ -1,4 +1,4 @@
-"""Tests for sessions_v2 dispatcher (SP2 Tasks 4a + 4b + 4c + 4d)."""
+"""Tests for sessions_v2 dispatcher (SP2 Tasks 4a + 4b + 4c + 4d + 4e)."""
 import asyncio
 import json
 import unittest
@@ -581,6 +581,296 @@ class TestOptionsAdvertisesPatchAndDelete(unittest.TestCase):
         # Sub-resources should include roles/locks/tags/active.
         subs = parsed["data"]["sub_resources"]
         for name in ("tags", "roles", "locks", "active"):
+            self.assertIn(name, subs)
+
+
+# ========================================================================= #
+# Task 4e — status + splits + monitoring + full appearance modify.           #
+# ========================================================================= #
+
+
+class TestGetStatus(unittest.TestCase):
+    def test_get_status_returns_processing_state(self):
+        session = MagicMock()
+        session.id = "sid"
+        session.name = "s1"
+        session.persistent_id = "pid-1"
+        session.is_processing = True
+        session.is_monitoring = False
+        session.is_suspended = False
+
+        agent_registry = MagicMock()
+        agent_registry.get_agent_by_session.return_value = None
+        agent_registry.active_session = None
+
+        async def go():
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[session])):
+                return await sessions_v2(
+                    ctx=_make_ctx(agent_registry=agent_registry),
+                    op="GET", target="status", session_id="sid",
+                )
+
+        parsed = json.loads(asyncio.run(go()))
+        self.assertEqual(parsed["method"], "GET")
+        self.assertTrue(parsed["ok"])
+        # data is a list of status dicts.
+        self.assertEqual(len(parsed["data"]), 1)
+        status = parsed["data"][0]
+        self.assertEqual(status["session_id"], "sid")
+        self.assertTrue(status["is_processing"])
+        self.assertFalse(status["is_monitoring"])
+
+    def test_get_status_no_target_info(self):
+        parsed = json.loads(asyncio.run(
+            sessions_v2(ctx=_make_ctx(), op="GET", target="status")
+        ))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("requires", parsed["error"].lower())
+
+    def test_get_status_no_match(self):
+        async def go():
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[])):
+                return await sessions_v2(
+                    ctx=_make_ctx(),
+                    op="GET", target="status", session_id="missing",
+                )
+
+        parsed = json.loads(asyncio.run(go()))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("no matching session", parsed["error"].lower())
+
+
+class TestStartMonitoring(unittest.TestCase):
+    def test_start_monitoring_delegates(self):
+        session = MagicMock()
+        session.id = "sid"
+        session.name = "s1"
+        session.is_monitoring = False
+
+        async def go():
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[session])):
+                with patch.object(
+                    mod, "_start_monitoring_core", new=AsyncMock(return_value=True)
+                ) as mock_start:
+                    result = await sessions_v2(
+                        ctx=_make_ctx(event_bus=MagicMock()),
+                        op="start", target="monitoring", session_id="sid",
+                    )
+                    return mock_start.call_count, mock_start.call_args, result
+
+        count, call_args, result = asyncio.run(go())
+        self.assertEqual(count, 1)
+        parsed = json.loads(result)
+        self.assertEqual(parsed["method"], "POST")
+        self.assertEqual(parsed["definer"], "TRIGGER")
+        self.assertTrue(parsed["ok"])
+        self.assertEqual(parsed["data"]["count"], 1)
+        self.assertTrue(parsed["data"]["monitoring"][0]["started"])
+        # Passed the session, event_bus, logger positionally.
+        self.assertIs(call_args.args[0], session)
+
+    def test_start_monitoring_no_target_info(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(event_bus=MagicMock()),
+            op="start", target="monitoring",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("requires", parsed["error"].lower())
+
+    def test_start_monitoring_no_match(self):
+        async def go():
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[])):
+                return await sessions_v2(
+                    ctx=_make_ctx(event_bus=MagicMock()),
+                    op="start", target="monitoring", session_id="missing",
+                )
+
+        parsed = json.loads(asyncio.run(go()))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("no matching session", parsed["error"].lower())
+
+
+class TestStopMonitoring(unittest.TestCase):
+    def test_stop_monitoring_delegates(self):
+        session = MagicMock()
+        session.id = "sid"
+        session.name = "s1"
+
+        async def go():
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[session])):
+                with patch.object(
+                    mod, "_stop_monitoring_core", new=AsyncMock(return_value=True)
+                ) as mock_stop:
+                    result = await sessions_v2(
+                        ctx=_make_ctx(),
+                        op="stop", target="monitoring", session_id="sid",
+                    )
+                    return mock_stop.call_count, result
+
+        count, result = asyncio.run(go())
+        self.assertEqual(count, 1)
+        parsed = json.loads(result)
+        self.assertEqual(parsed["method"], "DELETE")
+        self.assertTrue(parsed["ok"])
+        self.assertTrue(parsed["data"]["monitoring"][0]["stopped"])
+
+    def test_stop_monitoring_no_target_info(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(),
+            op="stop", target="monitoring",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("requires", parsed["error"].lower())
+
+
+class TestCreateSplit(unittest.TestCase):
+    def test_create_split_delegates_to_core(self):
+        from core.models import SplitSessionResponse
+
+        fake_response = SplitSessionResponse(
+            session_id="new-sid",
+            name="split-pane",
+            persistent_id="pid-2",
+            source_session_id="src",
+            direction="below",
+        )
+
+        async def go():
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(
+                mod, "_split_session_core", new=AsyncMock(return_value=fake_response)
+            ) as mock_split:
+                ctx = _make_ctx(role_manager=MagicMock())
+                result = await sessions_v2(
+                    ctx=ctx,
+                    op="POST", definer="CREATE",
+                    target="splits",
+                    session_id="src", direction="below",
+                )
+                return mock_split.call_args, result
+
+        call_args, result = asyncio.run(go())
+        parsed = json.loads(result)
+        self.assertEqual(parsed["method"], "POST")
+        self.assertEqual(parsed["definer"], "CREATE")
+        self.assertTrue(parsed["ok"])
+        self.assertEqual(parsed["data"]["session_id"], "new-sid")
+        # Verify SplitSessionRequest was built with session_id → target.session_id.
+        split_request = call_args.args[0]
+        self.assertEqual(split_request.target.session_id, "src")
+        self.assertEqual(split_request.direction, "below")
+
+    def test_create_split_missing_session_id(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(role_manager=MagicMock()),
+            op="POST", definer="CREATE", target="splits", direction="below",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("session_id", parsed["error"].lower())
+
+
+class TestPatchAppearance(unittest.TestCase):
+    def test_patch_appearance_delegates_to_modification_helper(self):
+        from core.models import ModificationResult
+
+        fake_result = ModificationResult(
+            session_id="sid",
+            session_name="s1",
+            success=True,
+            changes=["badge='Worker'"],
+        )
+
+        session = MagicMock()
+        session.id = "sid"
+        session.name = "s1"
+
+        async def go():
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[session])):
+                from iterm_mcpy.tools import modifications
+                with patch.object(
+                    modifications,
+                    "_apply_session_modification",
+                    new=AsyncMock(return_value=fake_result),
+                ) as mock_apply:
+                    ctx = _make_ctx(focus_cooldown=MagicMock())
+                    result = await sessions_v2(
+                        ctx=ctx,
+                        op="PATCH", definer="MODIFY",
+                        target="appearance",
+                        session_id="sid",
+                        badge="Worker",
+                    )
+                    return mock_apply.call_count, mock_apply.call_args, result
+
+        count, call_args, result = asyncio.run(go())
+        self.assertEqual(count, 1)
+        parsed = json.loads(result)
+        self.assertEqual(parsed["method"], "PATCH")
+        self.assertEqual(parsed["definer"], "MODIFY")
+        self.assertTrue(parsed["ok"])
+        self.assertTrue(parsed["data"]["success"])
+        # The modification model should have `badge="Worker"` set.
+        modification = call_args.args[1]
+        self.assertEqual(modification.badge, "Worker")
+
+    def test_patch_appearance_suspended_true_translates_to_suspend(self):
+        from core.models import ModificationResult
+
+        session = MagicMock()
+        session.id = "sid"
+        session.name = "s1"
+
+        async def go():
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[session])):
+                from iterm_mcpy.tools import modifications
+                with patch.object(
+                    modifications,
+                    "_apply_session_modification",
+                    new=AsyncMock(return_value=ModificationResult(
+                        session_id="sid", session_name="s1", success=True,
+                    )),
+                ) as mock_apply:
+                    await sessions_v2(
+                        ctx=_make_ctx(focus_cooldown=None),
+                        op="PATCH", definer="MODIFY",
+                        target="appearance",
+                        session_id="sid",
+                        suspended=True,
+                    )
+                    return mock_apply.call_args
+
+        call_args = asyncio.run(go())
+        modification = call_args.args[1]
+        self.assertTrue(modification.suspend)
+        self.assertFalse(modification.resume)
+
+    def test_patch_appearance_no_fields_returns_err(self):
+        # Plain PATCH with no target and no modifications should still fail
+        # with the Task 4d "not implemented" error so we don't no-op silently.
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(),
+            op="PATCH", definer="MODIFY",
+            session_id="sid",
+        )))
+        self.assertFalse(parsed["ok"])
+
+
+class TestOptionsAdvertises4e(unittest.TestCase):
+    def test_options_lists_new_targets_and_verbs(self):
+        parsed = json.loads(asyncio.run(sessions_v2(ctx=_make_ctx(), op="OPTIONS")))
+        methods = parsed["data"]["methods"]
+        # POST should advertise TRIGGER.
+        self.assertIn("TRIGGER", methods["POST"]["definers"])
+        # Sub-resources should include splits, monitoring, appearance.
+        subs = parsed["data"]["sub_resources"]
+        for name in ("splits", "monitoring", "appearance", "status"):
             self.assertIn(name, subs)
 
 
