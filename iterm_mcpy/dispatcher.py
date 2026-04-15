@@ -59,6 +59,23 @@ class MethodDispatcher:
     async def on_delete(self, ctx, **params) -> Any:
         raise NotImplementedError
 
+    async def on_head(self, ctx, **params) -> Any:
+        """Return data for a HEAD request, to be projected to HEAD_FIELDS.
+
+        Default implementation defers to `on_get()` and returns its result
+        unchanged, preserving prior behavior for collections that do not
+        override (the dispatcher projects via `project_head` afterwards).
+
+        Subclasses SHOULD override this when `on_get` performs per-item
+        enrichment that is unnecessary for the compact HEAD projection —
+        e.g., when GET reads terminal screen contents or shells out to fetch
+        a per-session CWD, but HEAD only needs names/IDs. Overrides may
+        return either BaseModels (which the dispatcher will project) or
+        pre-projected dicts / list-of-dicts (passed through unchanged by
+        `project_head`).
+        """
+        return await self.on_get(ctx, **params)
+
     async def dispatch(
         self,
         ctx,
@@ -97,8 +114,10 @@ class MethodDispatcher:
                 )
 
             if method == "HEAD":
-                # HEAD reuses GET and projects to HEAD_FIELDS.
-                data = await self.on_get(ctx, **params)
+                # HEAD delegates to on_head(). Default on_head calls on_get
+                # and projects — subclasses may override to skip expensive
+                # GET-only enrichment.
+                data = await self.on_head(ctx, **params)
                 return ok_envelope(method="HEAD", data=project_head(data))
 
             if method == "GET":

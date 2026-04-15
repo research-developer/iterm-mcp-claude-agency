@@ -856,6 +856,29 @@ class SessionsDispatcher(MethodDispatcher):
             return await self._get_status(ctx, **params)
         return await self._list_sessions(ctx, **params)
 
+    async def on_head(self, ctx, **params):
+        """HEAD override — list sessions WITHOUT the expensive per-session
+        enrichment that GET performs.
+
+        The default `MethodDispatcher.on_head` delegates to `on_get`, which
+        for sessions calls `_list_sessions_core` with `force_enrich=True`
+        and so fetches `get_cwd()` + `get_screen_contents()` per session —
+        work that HEAD discards via the HEAD_FIELDS projection. We skip that
+        enrichment by passing `force_enrich=False`.
+
+        HEAD is only meaningful here for the default listing target (no
+        `target=`/`target='output'`/`target='status'`); for the others we
+        fall back to the default behavior.
+        """
+        target = params.get("target")
+        if target in (None, "", "list"):
+            core_params = {k: v for k, v in params.items() if k in _GET_CORE_PARAMS}
+            response = await _list_sessions_core(
+                ctx, force_enrich=False, **core_params
+            )
+            return response.sessions
+        return await self.on_get(ctx, **params)
+
     async def _list_sessions(self, ctx, **params):
         """List sessions with optional filters.
 

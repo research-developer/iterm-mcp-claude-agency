@@ -59,6 +59,73 @@ class TestHead(unittest.TestCase):
         self.assertEqual(parsed["method"], "HEAD")
         self.assertTrue(parsed["ok"])
 
+    @staticmethod
+    def _build_enriched_terminal():
+        """Build a terminal with one session whose enrichment calls are
+        tracked AsyncMocks, so tests can assert whether HEAD/GET invokes
+        them.
+        """
+        session = MagicMock()
+        session.id = "sid-1"
+        session.name = "alpha"
+        session.persistent_id = "persist-1"
+        session.is_processing = False
+        session.is_suspended = False
+        session.suspended_at = None
+        session.suspended_by = None
+        session.last_update_time = None
+        session.get_cwd = AsyncMock(return_value="/tmp")
+        session.get_screen_contents = AsyncMock(return_value="last line")
+        terminal = MagicMock()
+        terminal.sessions = {session.id: session}
+        return terminal, session
+
+    @staticmethod
+    def _empty_agent_registry():
+        """agent_registry whose get_agent_by_session returns None (no agent)."""
+        registry = MagicMock()
+        registry.get_agent_by_session = MagicMock(return_value=None)
+        return registry
+
+    def test_head_skips_get_screen_contents_and_get_cwd(self):
+        """HEAD must not pay the per-session screen+cwd enrichment cost."""
+        terminal, session = self._build_enriched_terminal()
+        # If HEAD erroneously hits these, the AsyncMock side_effect fires.
+        session.get_screen_contents.side_effect = AssertionError(
+            "HEAD must not call get_screen_contents()"
+        )
+        session.get_cwd.side_effect = AssertionError(
+            "HEAD must not call get_cwd()"
+        )
+        ctx = _make_ctx(
+            terminal=terminal,
+            agent_registry=self._empty_agent_registry(),
+        )
+        parsed = json.loads(asyncio.run(sessions(ctx=ctx, op="HEAD")))
+        self.assertEqual(parsed["method"], "HEAD")
+        self.assertTrue(parsed["ok"])
+        self.assertEqual(len(parsed["data"]), 1)
+        # HEAD_FIELDS only: session_id, name, agent, is_processing, locked.
+        self.assertEqual(parsed["data"][0]["session_id"], "sid-1")
+        self.assertNotIn("cwd", parsed["data"][0])
+        self.assertNotIn("last_message", parsed["data"][0])
+        session.get_screen_contents.assert_not_called()
+        session.get_cwd.assert_not_called()
+
+    def test_get_does_call_enrichment(self):
+        """GET on the same dispatcher DOES perform the enrichment that HEAD
+        skips — confirming the HEAD/GET divergence is real."""
+        terminal, session = self._build_enriched_terminal()
+        ctx = _make_ctx(
+            terminal=terminal,
+            agent_registry=self._empty_agent_registry(),
+        )
+        parsed = json.loads(asyncio.run(sessions(ctx=ctx, op="GET")))
+        self.assertEqual(parsed["method"], "GET")
+        self.assertTrue(parsed["ok"])
+        session.get_cwd.assert_awaited()
+        session.get_screen_contents.assert_awaited()
+
 
 class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
