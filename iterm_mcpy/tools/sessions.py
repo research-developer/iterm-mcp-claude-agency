@@ -23,6 +23,7 @@ from core.models import (
     ManageSessionLockRequest,
     ManageSessionLockResponse,
     SessionInfo,
+    SessionRole,
     SetActiveSessionRequest,
     SplitSessionRequest,
     SplitSessionResponse,
@@ -336,6 +337,229 @@ def _format_compact_session(session_info: SessionInfo) -> str:
     return f"{name}  {agent}  {lock_status}  {tags}"
 
 
+async def _list_sessions_core(
+    ctx: Context,
+    *,
+    agents_only: bool = False,
+    tag: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    match: str = "any",
+    locked: Optional[bool] = None,
+    locked_by: Optional[str] = None,
+    session_id: Optional[str] = None,
+    agent: Optional[str] = None,
+    team: Optional[str] = None,
+    role: Optional[str] = None,
+    include_message: bool = True,
+    force_enrich: bool = True,
+) -> ListSessionsResponse:
+    """Core listing/filtering pipeline shared by list_sessions and sessions_v2.
+
+    Applies all filters and enriches each match into a SessionInfo (cwd,
+    last_message, last_activity, process_name). Returns the raw response model
+    so callers can either serialize it (legacy list_sessions) or hand it to an
+    envelope (sessions_v2).
+
+    Args:
+        ctx: MCP context, used to pull terminal, agent_registry, lock_manager,
+            role_manager, and logger from the lifespan context.
+        agents_only: If True, only include sessions with registered agents.
+        tag, tags, match: Tag filters (single or multiple with "any"/"all").
+        locked, locked_by: Lock filters.
+        session_id, agent, team: Identity filters (folded in from resolve_session).
+        role: Role filter (folded in from get_sessions_by_role).
+        include_message: Whether to populate last_message (expensive).
+        force_enrich: If True (default), always enrich with cwd/screen/etc.
+            Callers that only care about a compact projection can pass False
+            to skip the expensive per-session calls.
+
+    Returns:
+        ListSessionsResponse with all matching sessions.
+
+    Raises:
+        ValueError: If tag/lock filters are used without a tag_lock_manager,
+            or if an unknown role name is supplied.
+    """
+    terminal = ctx.request_context.lifespan_context["terminal"]
+    agent_registry = ctx.request_context.lifespan_context["agent_registry"]
+    lock_manager = ctx.request_context.lifespan_context.get("tag_lock_manager")
+    role_manager = ctx.request_context.lifespan_context.get("role_manager")
+    logger = ctx.request_context.lifespan_context["logger"]
+
+    # Build filter description for logging.
+    filters: List[str] = []
+    if agents_only:
+        filters.append("agents_only")
+    if tag:
+        filters.append(f"tag={tag}")
+    if tags:
+        filters.append(f"tags={tags} (match={match})")
+    if locked is not None:
+        filters.append(f"locked={locked}")
+    if locked_by:
+        filters.append(f"locked_by={locked_by}")
+    if session_id:
+        filters.append(f"session_id={session_id}")
+    if agent:
+        filters.append(f"agent={agent}")
+    if team:
+        filters.append(f"team={team}")
+    if role:
+        filters.append(f"role={role}")
+
+    filter_desc = f" [{', '.join(filters)}]" if filters else ""
+    logger.info(f"Listing sessions{filter_desc}")
+
+    # Combine single tag and multiple tags for filtering.
+    all_filter_tags: List[str] = []
+    if tag:
+        all_filter_tags.append(tag)
+    if tags:
+        all_filter_tags.extend(tags)
+
+    requires_lock_manager = bool(all_filter_tags) or locked is not None or locked_by is not None
+    if requires_lock_manager and lock_manager is None:
+        logger.warning("Tag/lock filtering requested but tag_lock_manager is not available")
+        raise ValueError(
+            "Tag and lock filtering requires the tag_lock_manager to be initialized"
+        )
+
+    # Resolve role filter to a set of session IDs up front (role is folded in
+    # from the legacy get_sessions_by_role tool).
+    role_session_ids: Optional[set] = None
+    if role is not None:
+        if role_manager is None:
+            raise ValueError("Role filtering requires the role_manager to be initialized")
+        try:
+            session_role = SessionRole(role.lower())
+        except ValueError as exc:
+            valid_roles = [r.value for r in SessionRole]
+            raise ValueError(
+                f"Invalid role '{role}'. Valid roles are: {valid_roles}"
+            ) from exc
+        role_session_ids = set(role_manager.get_sessions_by_role(session_role))
+
+    sessions = list(terminal.sessions.values())
+    result: List[SessionInfo] = []
+
+    for session in sessions:
+        agent_obj = agent_registry.get_agent_by_session(session.id)
+
+        # Apply agents_only filter.
+        if agents_only and agent_obj is None:
+            continue
+
+        # Apply identity filters (folded in from resolve_session).
+        if session_id is not None and session.id != session_id:
+            continue
+        if agent is not None and (agent_obj is None or agent_obj.name != agent):
+            continue
+        if team is not None and (agent_obj is None or team not in (agent_obj.teams or [])):
+            continue
+
+        # Apply role filter.
+        if role_session_ids is not None and session.id not in role_session_ids:
+            continue
+
+        # Get lock info.
+        is_locked = False
+        lock_owner = None
+        lock_time = None
+        pending_requests = 0
+        session_tags: List[str] = []
+
+        if lock_manager:
+            session_tags = lock_manager.get_tags(session.id)
+            lock_info = lock_manager.get_lock_info(session.id)
+            if lock_info:
+                is_locked = True
+                lock_owner = lock_info.owner
+                lock_time = lock_info.locked_at
+                pending_requests = len(lock_info.pending_requests)
+
+        # Apply tag filter.
+        if all_filter_tags:
+            if match == "all":
+                if not lock_manager or not lock_manager.has_all_tags(session.id, all_filter_tags):
+                    continue
+            else:  # "any" match
+                if not lock_manager or not lock_manager.has_any_tags(session.id, all_filter_tags):
+                    continue
+
+        # Apply locked filter.
+        if locked is not None:
+            if locked and not is_locked:
+                continue
+            if not locked and is_locked:
+                continue
+
+        # Apply locked_by filter.
+        if locked_by is not None:
+            if lock_owner != locked_by:
+                continue
+
+        # Gather extended session context.
+        session_cwd = None
+        last_message = None
+        last_activity_dt = None
+        process_name = None
+
+        if force_enrich:
+            try:
+                session_cwd = await session.get_cwd()
+            except Exception as e:
+                logger.debug(f"Error getting CWD for session {session.id}: {e}")
+
+            if include_message:
+                try:
+                    screen_content = await session.get_screen_contents(max_lines=15)
+                    last_message = _extract_last_message(screen_content)
+                except Exception as e:
+                    logger.debug(f"Error getting screen for session {session.id}: {e}")
+
+            try:
+                last_update = getattr(session, "last_update_time", None)
+                if last_update:
+                    last_activity_dt = datetime.fromtimestamp(last_update)
+            except Exception as e:
+                logger.debug(f"Error converting last_update_time for session {session.id}: {e}")
+
+            name = session.name
+            if "(" in name and name.endswith(")"):
+                process_name = name[name.rfind("(") + 1:-1]
+
+        session_info = SessionInfo(
+            session_id=session.id,
+            name=session.name,
+            persistent_id=session.persistent_id,
+            agent=agent_obj.name if agent_obj else None,
+            team=agent_obj.teams[0] if agent_obj and agent_obj.teams else None,
+            teams=agent_obj.teams if agent_obj else [],
+            is_processing=getattr(session, "is_processing", False),
+            suspended=getattr(session, "is_suspended", False),
+            suspended_at=getattr(session, "suspended_at", None),
+            suspended_by=getattr(session, "suspended_by", None),
+            tags=session_tags,
+            locked=is_locked,
+            locked_by=lock_owner,
+            locked_at=lock_time,
+            pending_access_requests=pending_requests,
+            cwd=session_cwd,
+            last_activity=last_activity_dt,
+            last_message=last_message,
+            process_name=process_name,
+        )
+        result.append(session_info)
+
+    logger.info(f"Found {len(result)} active sessions")
+
+    return ListSessionsResponse(
+        sessions=result,
+        total_count=len(result),
+        filter_applied=bool(filters),
+    )
+
+
 async def list_sessions(
     ctx: Context,
     agents_only: bool = False,
@@ -364,179 +588,46 @@ async def list_sessions(
         include_message: Include last Claude message in output
         shortcuts: Apply path shortcuts ($MY_REPOS, etc.)
     """
-    terminal = ctx.request_context.lifespan_context["terminal"]
-    agent_registry = ctx.request_context.lifespan_context["agent_registry"]
-    lock_manager = ctx.request_context.lifespan_context.get("tag_lock_manager")
-    logger = ctx.request_context.lifespan_context["logger"]
+    # Decide whether the chosen format actually consumes last_message.
+    #   - compact: never uses last_message
+    #   - grouped: only when include_message=True
+    #   - full/json: always returned in SessionInfo
+    needs_last_message = (
+        format in ("full", "json")
+        or (format == "grouped" and include_message)
+    )
+    force_enrich = format in ("grouped", "compact", "full", "json")
 
-    # Build filter description for logging
-    filters = []
-    if agents_only:
-        filters.append("agents_only")
-    if tag:
-        filters.append(f"tag={tag}")
-    if tags:
-        filters.append(f"tags={tags} (match={match})")
-    if locked is not None:
-        filters.append(f"locked={locked}")
-    if locked_by:
-        filters.append(f"locked_by={locked_by}")
-
-    filter_desc = f" [{', '.join(filters)}]" if filters else ""
-    logger.info(f"Listing sessions{filter_desc}")
-
-    sessions = list(terminal.sessions.values())
-    result: List[SessionInfo] = []
-
-    # Combine single tag and multiple tags for filtering
-    all_filter_tags = []
-    if tag:
-        all_filter_tags.append(tag)
-    if tags:
-        all_filter_tags.extend(tags)
-
-    # Validate lock_manager availability when tag/lock filters are used
-    requires_lock_manager = all_filter_tags or locked is not None or locked_by is not None
-    if requires_lock_manager and lock_manager is None:
-        logger.warning("Tag/lock filtering requested but tag_lock_manager is not available")
-        return "Error: Tag and lock filtering requires the tag_lock_manager to be initialized"
-
-    for session in sessions:
-        agent_obj = agent_registry.get_agent_by_session(session.id)
-
-        # Apply agents_only filter
-        if agents_only and agent_obj is None:
-            continue
-
-        # Get lock info
-        is_locked = False
-        lock_owner = None
-        lock_time = None
-        pending_requests = 0
-        session_tags: List[str] = []
-
-        if lock_manager:
-            session_tags = lock_manager.get_tags(session.id)
-            lock_info = lock_manager.get_lock_info(session.id)
-            if lock_info:
-                is_locked = True
-                lock_owner = lock_info.owner
-                lock_time = lock_info.locked_at
-                pending_requests = len(lock_info.pending_requests)
-
-        # Apply tag filter
-        if all_filter_tags:
-            if match == "all":
-                if not lock_manager or not lock_manager.has_all_tags(session.id, all_filter_tags):
-                    continue
-            else:  # "any" match
-                if not lock_manager or not lock_manager.has_any_tags(session.id, all_filter_tags):
-                    continue
-
-        # Apply locked filter
-        if locked is not None:
-            if locked and not is_locked:
-                continue
-            if not locked and is_locked:
-                continue
-
-        # Apply locked_by filter
-        if locked_by is not None:
-            if lock_owner != locked_by:
-                continue
-
-        # Gather extended session context (for grouped format)
-        session_cwd = None
-        last_message = None
-        last_activity_dt = None
-        process_name = None
-
-        # Gather extended info. Screen content is the expensive call — only fetch it
-        # when the chosen format actually consumes last_message:
-        #   - compact: never uses last_message
-        #   - grouped: only when include_message=True
-        #   - full/json: always returned in SessionInfo
-        needs_last_message = (
-            format in ("full", "json")
-            or (format == "grouped" and include_message)
+    try:
+        response = await _list_sessions_core(
+            ctx,
+            agents_only=agents_only,
+            tag=tag,
+            tags=tags,
+            match=match,
+            locked=locked,
+            locked_by=locked_by,
+            include_message=needs_last_message,
+            force_enrich=force_enrich,
         )
+    except ValueError as exc:
+        return f"Error: {exc}"
 
-        if format in ("grouped", "compact", "full", "json"):
-            try:
-                # Get CWD from session
-                session_cwd = await session.get_cwd()
-            except Exception as e:
-                logger.debug(f"Error getting CWD for session {session.id}: {e}")
+    result = response.sessions
 
-            if needs_last_message:
-                try:
-                    # Get screen content for last message
-                    screen_content = await session.get_screen_contents(max_lines=15)
-                    last_message = _extract_last_message(screen_content)
-                except Exception as e:
-                    logger.debug(f"Error getting screen for session {session.id}: {e}")
-
-            # Convert last_update_time to datetime
-            try:
-                last_update = getattr(session, "last_update_time", None)
-                if last_update:
-                    last_activity_dt = datetime.fromtimestamp(last_update)
-            except Exception as e:
-                logger.debug(f"Error converting last_update_time for session {session.id}: {e}")
-
-            # Extract process name from session name (e.g., "name (process)")
-            name = session.name
-            if "(" in name and name.endswith(")"):
-                process_name = name[name.rfind("(") + 1:-1]
-
-        # Build SessionInfo
-        session_info = SessionInfo(
-            session_id=session.id,
-            name=session.name,
-            persistent_id=session.persistent_id,
-            agent=agent_obj.name if agent_obj else None,
-            team=agent_obj.teams[0] if agent_obj and agent_obj.teams else None,
-            teams=agent_obj.teams if agent_obj else [],
-            is_processing=getattr(session, "is_processing", False),
-            suspended=getattr(session, "is_suspended", False),
-            suspended_at=getattr(session, "suspended_at", None),
-            suspended_by=getattr(session, "suspended_by", None),
-            tags=session_tags,
-            locked=is_locked,
-            locked_by=lock_owner,
-            locked_at=lock_time,
-            pending_access_requests=pending_requests,
-            # Extended context
-            cwd=session_cwd,
-            last_activity=last_activity_dt,
-            last_message=last_message,
-            process_name=process_name,
-        )
-        result.append(session_info)
-
-    logger.info(f"Found {len(result)} active sessions")
-
-    # Format output
+    # Format output.
     if format == "grouped":
-        # New grouped format (default)
         return _format_grouped_output(
             result,
             shortcuts=shortcuts,
             include_message=include_message,
-            group_by=group_by
+            group_by=group_by,
         )
-    elif format == "compact":
-        # Legacy compact format (flat list)
+    if format == "compact":
         lines = [_format_compact_session(s) for s in result]
         return "\n".join(lines) if lines else "No sessions found"
-    else:
-        # Full JSON format using the response model
-        response = ListSessionsResponse(
-            sessions=result,
-            total_count=len(result),
-            filter_applied=bool(filters),
-        )
-        return response.model_dump_json(indent=2, exclude_none=True)
+    # Full JSON format using the response model.
+    return response.model_dump_json(indent=2, exclude_none=True)
 
 
 async def set_session_tags(
