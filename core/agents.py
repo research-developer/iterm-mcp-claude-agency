@@ -6,7 +6,7 @@ import os
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Set, TYPE_CHECKING
+from typing import ClassVar, Dict, List, Optional, Set, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,10 @@ class Agent(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, str] = Field(default_factory=dict, description="Optional metadata")
     role: Optional[SessionRole] = Field(default=None, description="Role assigned to this agent")
+
+    # SP2: fields returned by HEAD (compact projection).
+    # Identity + session binding + teams is enough to distinguish agents.
+    HEAD_FIELDS: ClassVar[set[str]] = {"name", "session_id", "teams"}
 
     def is_member_of(self, team: str) -> bool:
         """Check if agent is a member of the specified team."""

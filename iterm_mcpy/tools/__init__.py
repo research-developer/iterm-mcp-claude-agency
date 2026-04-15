@@ -29,6 +29,7 @@ def register_all(mcp):
         commands,
         sessions,
         sessions_v2,  # SP2 method-semantic tool (coexists with legacy sessions).
+        agents_v2,    # SP2 method-semantic tool (coexists with legacy agents).
     )
 
     _MODULES = [
@@ -36,7 +37,7 @@ def register_all(mcp):
         services, roles, notifications, wait,
         feedback, managers, agents, control,
         monitoring, modifications, orchestration,
-        commands, sessions, sessions_v2,
+        commands, sessions, sessions_v2, agents_v2,
     ]
 
     for mod in _MODULES:

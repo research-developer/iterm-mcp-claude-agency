@@ -145,10 +145,12 @@ def _fallback_head_fields(cls: type) -> set[str]:
 def _to_jsonable(obj: Any) -> Any:
     """Convert Pydantic models (recursively) to JSON-serializable structures.
 
-    Applies `exclude_none=True` to every model dumped.
+    Applies `exclude_none=True` and `mode='json'` to every model dumped so
+    types like ``datetime`` and ``UUID`` come out as ISO strings rather than
+    raw Python objects (which the stdlib ``json`` encoder cannot handle).
     """
     if isinstance(obj, BaseModel):
-        return obj.model_dump(exclude_none=True)
+        return obj.model_dump(mode="json", exclude_none=True)
     if isinstance(obj, list):
         return [_to_jsonable(x) for x in obj]
     if isinstance(obj, dict):
