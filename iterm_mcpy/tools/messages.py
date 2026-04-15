@@ -1,4 +1,4 @@
-"""SP2 `messages_v2` action tool — Task 13/14.
+"""SP2 `messages` action tool — Task 13/14.
 
 Replaces the legacy ``send_cascade_message`` and ``send_hierarchical_message``
 tools. Both were POST-like broadcasts to sessions; v2 unifies them under a
@@ -110,7 +110,7 @@ async def _deliver_hierarchical(
     }
 
 
-async def messages_v2(
+async def messages(
     ctx: Context,
     op: str = "POST",
     definer: Optional[str] = None,
@@ -160,7 +160,7 @@ async def messages_v2(
             method=resolution.method,
             definer=resolution.definer,
             error=(
-                f"messages_v2 only supports POST+SEND "
+                f"messages only supports POST+SEND "
                 f"(got {resolution.method}+{resolution.definer})"
             ),
         )
@@ -169,12 +169,12 @@ async def messages_v2(
     if cascade is None and not targets:
         return err_envelope(
             method="POST", definer="SEND",
-            error="messages_v2 requires either 'cascade' or 'targets'",
+            error="messages requires either 'cascade' or 'targets'",
         )
     if cascade is not None and targets:
         return err_envelope(
             method="POST", definer="SEND",
-            error="messages_v2 accepts either 'cascade' or 'targets', not both",
+            error="messages accepts either 'cascade' or 'targets', not both",
         )
 
     try:
@@ -214,5 +214,5 @@ async def messages_v2(
 
 
 def register(mcp):
-    """Register the messages_v2 action tool."""
-    mcp.tool(name="messages_v2")(messages_v2)
+    """Register the messages action tool."""
+    mcp.tool(name="messages")(messages)

@@ -1,4 +1,4 @@
-"""SP2 `delegate_v2` action tool — Task 13/14.
+"""SP2 `delegate` action tool — Task 13/14.
 
 Replaces the legacy ``delegate_task`` and ``execute_plan`` tools, unifying
 them behind a ``target`` discriminator:
@@ -74,7 +74,7 @@ async def _delegate_task(
         retry_count=request.retry_count,
     )
 
-    logger.info(f"delegate_v2 task: manager={request.manager} status={result.status.value}")
+    logger.info(f"delegate task: manager={request.manager} status={result.status.value}")
 
     return TaskResultResponse(
         task_id=result.task_id,
@@ -135,7 +135,7 @@ async def _execute_plan(
     plan_result = await manager.orchestrate(task_plan)
 
     logger.info(
-        f"delegate_v2 plan: manager={request.manager} "
+        f"delegate plan: manager={request.manager} "
         f"plan={task_plan.name} success={plan_result.success}"
     )
 
@@ -165,7 +165,7 @@ async def _execute_plan(
     )
 
 
-async def delegate_v2(
+async def delegate(
     ctx: Context,
     op: str = "POST",
     definer: Optional[str] = None,
@@ -217,7 +217,7 @@ async def delegate_v2(
             method=resolution.method,
             definer=resolution.definer,
             error=(
-                f"delegate_v2 only supports POST+INVOKE "
+                f"delegate only supports POST+INVOKE "
                 f"(got {resolution.method}+{resolution.definer})"
             ),
         )
@@ -225,7 +225,7 @@ async def delegate_v2(
     if target not in ("task", "plan"):
         return err_envelope(
             method="POST", definer="INVOKE",
-            error=f"delegate_v2 target must be 'task' or 'plan' (got {target!r})",
+            error=f"delegate target must be 'task' or 'plan' (got {target!r})",
         )
 
     try:
@@ -233,7 +233,7 @@ async def delegate_v2(
             if not manager_name or not task:
                 return err_envelope(
                     method="POST", definer="INVOKE",
-                    error="delegate_v2 target='task' requires manager_name and task",
+                    error="delegate target='task' requires manager_name and task",
                 )
             result = await _delegate_task(
                 ctx,
@@ -250,7 +250,7 @@ async def delegate_v2(
         if not manager_name or plan is None:
             return err_envelope(
                 method="POST", definer="INVOKE",
-                error="delegate_v2 target='plan' requires manager_name and plan",
+                error="delegate target='plan' requires manager_name and plan",
             )
         result = await _execute_plan(ctx, manager_name=manager_name, plan=plan)
         return ok_envelope(method="POST", definer="INVOKE", data=result)
@@ -259,5 +259,5 @@ async def delegate_v2(
 
 
 def register(mcp):
-    """Register the delegate_v2 action tool."""
-    mcp.tool(name="delegate_v2")(delegate_v2)
+    """Register the delegate action tool."""
+    mcp.tool(name="delegate")(delegate)

@@ -1,126 +1,152 @@
-"""Telemetry dashboard tool.
+"""SP2 `telemetry` action tool — Task 13/14.
 
-Provides the start_telemetry_dashboard tool and a helper that starts a
-lightweight HTTP server streaming telemetry JSON.
+Replaces the legacy ``start_telemetry_dashboard`` tool. Exposes the
+dashboard lifecycle as a method-semantic action:
+
+    POST+TRIGGER /telemetry → start the dashboard (analogue of legacy tool).
+    DELETE      /telemetry  → stop the dashboard (best-effort; cancels the
+                              cached asyncio task and calls
+                              :func:`core.dashboard.stop_dashboard` if
+                              available).
+
+Any other (op, definer) pair returns an err envelope.
 """
-
-import asyncio
-import json
 from typing import Optional
 
 from mcp.server.fastmcp import Context
 
-from core.dashboard import start_dashboard
-from core.terminal import ItermTerminal
-from utils.telemetry import TelemetryEmitter
+from core.definer_verbs import DefinerError, resolve_op
+from iterm_mcpy.responses import err_envelope, ok_envelope
+from iterm_mcpy.tools import telemetry as telemetry_module
 
 
-# Module-local state for the helper HTTP server (singleton task per server process).
-_telemetry_server_task: Optional[asyncio.Task] = None
+async def _start_dashboard(ctx: Context, port: int, duration_seconds: int):
+    """Start the telemetry dashboard — mirrors the legacy start body."""
+    # Lazy import so the test suite can stub out ``core.dashboard``.
+    from core.dashboard import start_dashboard
 
-
-async def _start_telemetry_server(
-    port: int,
-    duration: int,
-    telemetry: TelemetryEmitter,
-    terminal: ItermTerminal,
-) -> str:
-    """Start a lightweight HTTP server that streams telemetry JSON."""
-    global _telemetry_server_task
-
-    if _telemetry_server_task:
-        _telemetry_server_task.cancel()
-
-    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        try:
-            await terminal.get_sessions()
-            payload = telemetry.dashboard_state(terminal)
-            body = json.dumps(payload, indent=2)
-            response = (
-                "HTTP/1.1 200 OK\r\n"
-                "Content-Type: application/json\r\n"
-                f"Content-Length: {len(body.encode())}\r\n"
-                "Connection: close\r\n\r\n"
-                f"{body}"
-            )
-            writer.write(response.encode())
-            await writer.drain()
-        finally:
-            writer.close()
-            await writer.wait_closed()
-
-    async def serve() -> None:
-        server = await asyncio.start_server(handle, "0.0.0.0", port)
-        try:
-            async with server:
-                await asyncio.wait_for(server.serve_forever(), timeout=duration)
-        except asyncio.TimeoutError:
-            # Normal shutdown after duration
-            pass
-        finally:
-            server.close()
-            await server.wait_closed()
-
-    _telemetry_server_task = asyncio.create_task(serve())
-    return f"Telemetry web dashboard running at http://localhost:{port} for {duration}s"
-
-
-async def start_telemetry_dashboard(
-    ctx: Context,
-    port: int = 9999,
-    duration_seconds: int = 300,
-) -> str:
-    """Start a lightweight web server that streams telemetry JSON for external dashboards.
-
-    The dashboard provides:
-    - Real-time agent status cards with SSE updates
-    - Event stream showing notifications and activities
-    - Action buttons for focusing panes and sending commands via API calls
-    - Dark terminal theme matching iTerm2 aesthetic
-
-    Args:
-        port: Port to run the telemetry server on (default: 9999)
-        duration_seconds: How long to keep the server running (default: 300, 0 = indefinitely)
-    """
-    # Pull dependencies from lifespan context — do NOT use module-global lazy imports
-    # because launching via `python -m iterm_mcpy.fastmcp_server` creates two module
-    # instances (one as `__main__`, one as `iterm_mcpy.fastmcp_server`) and the latter
-    # has uninitialized globals.
     lifespan = ctx.request_context.lifespan_context
-    telemetry: TelemetryEmitter = lifespan["telemetry"]
-    terminal: ItermTerminal = lifespan["terminal"]
+    telemetry = lifespan["telemetry"]
+    terminal = lifespan["terminal"]
     notification_manager = lifespan["notification_manager"]
     logger = lifespan["logger"]
 
+    message = await start_dashboard(
+        telemetry=telemetry,
+        terminal=terminal,
+        notification_manager=notification_manager,
+        port=port,
+        duration=duration_seconds,
+    )
+    logger.info(message)
+
+    setup_msg = (
+        f"\n\nOpen the dashboard at: http://localhost:{port}\n\n"
+        f"The dashboard uses API calls for agent control:\n"
+        f"  - /api/focus?agent=<name> - Focus an agent's pane\n"
+        f"  - /api/send?agent=<name>&command=<cmd> - Send command to agent"
+    )
+
+    return {
+        "status": "started",
+        "message": message,
+        "url": f"http://localhost:{port}",
+        "setup": setup_msg,
+    }
+
+
+async def _stop_dashboard(ctx: Context):
+    """Stop the telemetry dashboard.
+
+    Cancels the legacy-module task (if one exists) and calls
+    :func:`core.dashboard.stop_dashboard` to tear down the server.
+    """
+    logger = ctx.request_context.lifespan_context["logger"]
+
+    cancelled_task = False
+    task = getattr(telemetry_module, "_telemetry_server_task", None)
+    if task is not None and not task.done():
+        task.cancel()
+        cancelled_task = True
+
     try:
-        message = await start_dashboard(
-            telemetry=telemetry,
-            terminal=terminal,
-            notification_manager=notification_manager,
-            port=port,
-            duration=duration_seconds,
-        )
-        logger.info(message)
-
-        # Include setup instructions
-        setup_msg = (
-            f"\n\nOpen the dashboard at: http://localhost:{port}\n\n"
-            f"The dashboard uses API calls for agent control:\n"
-            f"  - /api/focus?agent=<name> - Focus an agent's pane\n"
-            f"  - /api/send?agent=<name>&command=<cmd> - Send command to agent"
-        )
-
-        return json.dumps({
-            "status": "started",
-            "message": message,
-            "url": f"http://localhost:{port}",
-            "setup": setup_msg,
-        }, indent=2)
+        from core.dashboard import stop_dashboard
+        await stop_dashboard()
+        stopped_server = True
     except Exception as e:
-        logger.error(f"Error starting telemetry server: {e}")
-        return json.dumps({"error": str(e)}, indent=2)
+        logger.warning(f"telemetry stop: stop_dashboard raised: {e}")
+        stopped_server = False
+
+    return {
+        "status": "stopped",
+        "cancelled_task": cancelled_task,
+        "stopped_server": stopped_server,
+    }
+
+
+async def telemetry(
+    ctx: Context,
+    op: str = "POST",
+    definer: Optional[str] = None,
+    port: int = 9999,
+    duration_seconds: int = 300,
+) -> str:
+    """Telemetry dashboard lifecycle.
+
+    POST+TRIGGER (or op="start"): start the dashboard. Mirrors the legacy
+    ``start_telemetry_dashboard`` tool — launches a lightweight web server
+    on ``port`` that streams telemetry JSON for ``duration_seconds`` (0 =
+    indefinitely).
+
+    DELETE (or op="stop"): stop the dashboard. Best-effort — cancels the
+    module-level task and calls :func:`core.dashboard.stop_dashboard`.
+
+    Args:
+        op: HTTP method or friendly verb. "start"/"trigger" resolve to
+            POST+TRIGGER; "stop"/"delete" resolve to DELETE.
+        definer: Explicit definer — must be TRIGGER for POST (ignored for
+            DELETE).
+        port: Port for the telemetry server (POST only, default 9999).
+        duration_seconds: How long to keep the server running (POST only,
+            default 300, 0 = indefinitely).
+    """
+    try:
+        resolution = resolve_op(op, definer)
+    except DefinerError as e:
+        return err_envelope(method=op.upper(), error=str(e))
+
+    method = resolution.method
+    resolved_definer = resolution.definer
+
+    if method == "POST":
+        if resolved_definer != "TRIGGER":
+            return err_envelope(
+                method="POST", definer=resolved_definer,
+                error=(
+                    f"telemetry POST requires definer=TRIGGER "
+                    f"(got {resolved_definer})"
+                ),
+            )
+        try:
+            data = await _start_dashboard(ctx, port=port, duration_seconds=duration_seconds)
+            return ok_envelope(method="POST", definer="TRIGGER", data=data)
+        except Exception as e:
+            return err_envelope(method="POST", definer="TRIGGER", error=str(e))
+
+    if method == "DELETE":
+        try:
+            data = await _stop_dashboard(ctx)
+            return ok_envelope(method="DELETE", data=data)
+        except Exception as e:
+            return err_envelope(method="DELETE", error=str(e))
+
+    return err_envelope(
+        method=method,
+        definer=resolved_definer,
+        error=f"telemetry only supports POST+TRIGGER or DELETE (got {method})",
+    )
 
 
 def register(mcp):
-    """Register telemetry tools with the FastMCP instance."""
-    mcp.tool()(start_telemetry_dashboard)
+    """Register the telemetry action tool."""
+    mcp.tool(name="telemetry")(telemetry)

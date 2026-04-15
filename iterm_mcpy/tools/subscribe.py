@@ -1,4 +1,4 @@
-"""SP2 `subscribe_v2` action tool — Task 13/14.
+"""SP2 `subscribe` action tool — Task 13/14.
 
 Replaces the legacy ``subscribe_to_output_pattern`` tool. Registers a regex
 pattern subscription against the event bus; matches fire a workflow event.
@@ -16,7 +16,7 @@ from core.models import PatternSubscriptionResponse
 from iterm_mcpy.responses import err_envelope, ok_envelope
 
 
-async def subscribe_v2(
+async def subscribe(
     ctx: Context,
     op: str = "POST",
     definer: Optional[str] = None,
@@ -49,7 +49,7 @@ async def subscribe_v2(
             method=resolution.method,
             definer=resolution.definer,
             error=(
-                f"subscribe_v2 only supports POST+TRIGGER "
+                f"subscribe only supports POST+TRIGGER "
                 f"(got {resolution.method}+{resolution.definer})"
             ),
         )
@@ -57,7 +57,7 @@ async def subscribe_v2(
     if pattern is None:
         return err_envelope(
             method="POST", definer="TRIGGER",
-            error="subscribe_v2 requires 'pattern' parameter",
+            error="subscribe requires 'pattern' parameter",
         )
 
     try:
@@ -75,7 +75,7 @@ async def subscribe_v2(
         logger = lifespan["logger"]
 
         async def on_match(text: str, match: Any) -> None:
-            logger.debug(f"subscribe_v2 match: {pattern} -> {match}")
+            logger.debug(f"subscribe match: {pattern} -> {match}")
 
         subscription_id = await event_bus.subscribe_to_pattern(
             pattern=pattern,
@@ -88,12 +88,12 @@ async def subscribe_v2(
             pattern=pattern,
             event_name=event_name,
         )
-        logger.info(f"subscribe_v2: pattern={pattern!r} event={event_name!r}")
+        logger.info(f"subscribe: pattern={pattern!r} event={event_name!r}")
         return ok_envelope(method="POST", definer="TRIGGER", data=result)
     except Exception as e:
         return err_envelope(method="POST", definer="TRIGGER", error=str(e))
 
 
 def register(mcp):
-    """Register the subscribe_v2 action tool."""
-    mcp.tool(name="subscribe_v2")(subscribe_v2)
+    """Register the subscribe action tool."""
+    mcp.tool(name="subscribe")(subscribe)

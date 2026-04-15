@@ -1,508 +1,392 @@
-"""Manager agent tools.
+"""SP2 method-semantic `managers` tool — Task 7.
 
-Provides tools for managing manager agents that orchestrate worker agents,
-delegating tasks through delegation strategies, and executing multi-step
-task plans. Includes helpers to wire execution callbacks to workers via
-the terminal/agent registry.
+Fourth SP2 collection tool (after sessions + agents + teams).
+Replaces the legacy ``manage_managers`` tool's 6 operations:
+
+    - create         -> POST + CREATE  /managers
+    - list           -> GET             /managers
+    - get_info       -> GET             /managers/{name}
+    - remove         -> DELETE          /managers/{name}
+    - add_worker     -> POST + CREATE   /managers/{name}/workers
+    - remove_worker  -> DELETE          /managers/{name}/workers
+
+Registered under the provisional name ``managers`` to coexist with the
+legacy ``manage_managers`` tool; the cutover (rename to ``managers`` and
+unregister the legacy tool) happens at the end of SP2.
+
+Note: ``delegate_task`` and ``execute_plan`` (other tools in the legacy
+``managers`` module) are action tools and are handled by Task 14, not
+this task.
 """
-
-import asyncio
-import json
-import logging
-from typing import Optional
+from typing import Dict, List, Optional
 
 from mcp.server.fastmcp import Context
 
-from core.agents import AgentRegistry
-from core.manager import (
-    DelegationStrategy,
-    ManagerAgent,
-    ManagerRegistry,
-    SessionRole as ManagerSessionRole,
-    TaskPlan,
-    TaskStep,
-)
-from core.models import (
-    DelegateTaskRequest,
-    ExecutePlanRequest,
-    ManageManagersRequest,
-    ManageManagersResponse,
-    PlanResultResponse,
-    TaskResultResponse,
-)
-from core.terminal import ItermTerminal
+from iterm_mcpy.dispatcher import MethodDispatcher
 
 
-async def _execute_task_on_worker(
-    worker: str,
-    task: str,
-    timeout_seconds: Optional[int],
-    terminal: ItermTerminal,
-    agent_registry: AgentRegistry,
-    logger: logging.Logger,
-) -> tuple[Optional[str], bool, Optional[str]]:
-    """Execute a task on a worker agent and return result.
+class ManagersDispatcher(MethodDispatcher):
+    """Dispatcher for the `managers` collection (SP2 method-semantic)."""
 
-    Args:
-        worker: Worker agent name
-        task: Command to execute
-        timeout_seconds: Optional timeout
-        terminal: Terminal instance
-        agent_registry: Agent registry
-        logger: Logger instance
+    collection = "managers"
 
-    Returns:
-        Tuple of (output, success, error)
-    """
-    agent = agent_registry.get_agent(worker)
-    if not agent:
-        return None, False, f"Worker agent '{worker}' not found"
+    METHODS = {
+        "GET": {
+            "aliases": ["list", "get", "read", "query"],
+            "params": [
+                "manager_name? (without: list all; with: get_info)",
+            ],
+            "description": (
+                "List managers (no manager_name) or get a single manager's "
+                "details (with manager_name)."
+            ),
+        },
+        "POST": {
+            "definers": {
+                "CREATE": {
+                    "aliases": ["create", "add", "register"],
+                    "params": [
+                        "target=None | target='workers'",
+                        # target=None (create manager):
+                        "manager_name",
+                        "workers?=[...]",
+                        "delegation_strategy?='role_based'|'round_robin'|"
+                        "'least_busy'|'random'|'priority'",
+                        "worker_roles?={worker: role}",
+                        "metadata?={...}",
+                        # target='workers' (add worker):
+                        "worker_name",
+                        "worker_role?",
+                    ],
+                    "description": (
+                        "Create a new manager (no target) or add a worker "
+                        "to a manager (target='workers')."
+                    ),
+                },
+            },
+        },
+        "DELETE": {
+            "aliases": ["remove", "delete"],
+            "params": [
+                "target=None | target='workers'",
+                "manager_name",
+                # target='workers':
+                "worker_name?",
+            ],
+            "description": (
+                "Remove a manager (no target) or remove a worker from a "
+                "manager (target='workers')."
+            ),
+        },
+        "HEAD": {"compact_fields": ["name", "worker_count"]},
+        "OPTIONS": {"description": "Return this schema."},
+    }
 
-    session = await terminal.get_session_by_id(agent.session_id)
-    if not session:
-        return None, False, f"Session for worker '{worker}' not found"
+    sub_resources = ["workers"]
 
-    try:
-        # Send the command
-        await session.send_text(task + "\n")
+    # -------------------------------- GET -------------------------------- #
 
-        # Wait for command to complete with proper timeout
-        # Use a polling approach to check for command completion
-        wait_time = timeout_seconds if timeout_seconds else 30
-        poll_interval = 0.5
-        elapsed = 0.0
-        completed = False
+    async def on_get(self, ctx, **params):
+        """GET /managers — list managers, or get one by name."""
+        manager_name = params.get("manager_name")
+        if manager_name:
+            return await self._get_manager_info(ctx, manager_name)
+        return await self._list_managers(ctx)
 
-        while elapsed < wait_time:
-            await asyncio.sleep(poll_interval)
-            elapsed += poll_interval
-            # Check if session is no longer processing (command completed)
-            if hasattr(session, 'is_processing') and not session.is_processing:
-                completed = True
-                break
+    async def _list_managers(self, ctx):
+        """GET /managers — list all registered managers."""
+        lifespan = ctx.request_context.lifespan_context
+        manager_registry = lifespan["manager_registry"]
+        logger = lifespan["logger"]
 
-        # Read output (always — may be partial if timed out)
-        output = await session.get_screen_contents(max_lines=100)
+        managers = manager_registry.list_managers()
+        result = []
+        for manager in managers:
+            result.append({
+                "name": manager.name,
+                "workers": manager.workers,
+                "delegation_strategy": manager.strategy.value,
+                "worker_count": len(manager.workers),
+            })
 
-        # If we have is_processing and exited the loop without completion, report timeout.
-        # (If is_processing isn't available, assume completion to preserve prior behavior.)
-        if hasattr(session, 'is_processing') and not completed and session.is_processing:
-            return output, False, f"Task timed out after {wait_time} seconds"
+        logger.info(f"managers GET: listed {len(result)} managers")
+        return {"managers": result, "count": len(result)}
 
-        return output, True, None
+    async def _get_manager_info(self, ctx, manager_name: str):
+        """GET /managers/{name} — detailed info for a single manager."""
+        lifespan = ctx.request_context.lifespan_context
+        manager_registry = lifespan["manager_registry"]
+        logger = lifespan["logger"]
 
-    except asyncio.TimeoutError:
-        return None, False, f"Task timed out after {timeout_seconds} seconds"
-    except Exception as e:
-        logger.error(f"Error executing task on worker {worker}: {e}")
-        return None, False, str(e)
-
-
-def _setup_manager_callbacks(
-    manager: ManagerAgent,
-    terminal: ItermTerminal,
-    agent_registry: AgentRegistry,
-    logger: logging.Logger,
-) -> None:
-    """Set up execution callbacks for a manager agent."""
-
-    async def execute_callback(
-        worker: str,
-        task: str,
-        timeout_seconds: Optional[int],
-    ) -> tuple[Optional[str], bool, Optional[str]]:
-        return await _execute_task_on_worker(
-            worker, task, timeout_seconds, terminal, agent_registry, logger
-        )
-
-    manager._execute_callback = execute_callback
-
-
-async def manage_managers(
-    request: ManageManagersRequest,
-    ctx: Context,
-) -> str:
-    """Manage manager agents with a single consolidated tool.
-
-    Consolidates: create_manager, list_managers, get_manager_info, remove_manager,
-                  add_worker_to_manager, remove_worker_from_manager
-
-    Operations:
-    - create: Create a new manager (requires manager_name)
-    - list: List all managers
-    - get_info: Get info about a manager (requires manager_name)
-    - remove: Remove a manager (requires manager_name)
-    - add_worker: Add a worker to a manager (requires manager_name, worker_name)
-    - remove_worker: Remove a worker from a manager (requires manager_name, worker_name)
-
-    Args:
-        request: The manager operation request with operation type and parameters
-
-    Returns:
-        JSON with operation results
-    """
-    terminal = ctx.request_context.lifespan_context["terminal"]
-    agent_registry = ctx.request_context.lifespan_context["agent_registry"]
-    manager_registry: ManagerRegistry = ctx.request_context.lifespan_context["manager_registry"]
-    logger = ctx.request_context.lifespan_context["logger"]
-
-    try:
-        if request.operation == "create":
-            if not request.manager_name:
-                response = ManageManagersResponse(
-                    operation=request.operation,
-                    success=False,
-                    error="manager_name is required for create operation"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            # Convert worker roles from strings to SessionRole
-            worker_roles = {}
-            for worker, role_str in request.worker_roles.items():
-                worker_roles[worker] = ManagerSessionRole(role_str)
-
-            # Create the manager
-            manager = manager_registry.create_manager(
-                name=request.manager_name,
-                workers=request.workers,
-                delegation_strategy=DelegationStrategy(request.delegation_strategy),
-                worker_roles=worker_roles,
-                metadata=request.metadata,
-            )
-
-            # Set up execution callbacks
-            _setup_manager_callbacks(manager, terminal, agent_registry, logger)
-
-            logger.info(f"Created manager '{request.manager_name}' with {len(request.workers)} workers")
-
-            response = ManageManagersResponse(
-                operation=request.operation,
-                success=True,
-                data={
-                    "name": manager.name,
-                    "workers": manager.workers,
-                    "delegation_strategy": manager.strategy.value,
-                    "created": True
-                }
-            )
-            return response.model_dump_json(indent=2, exclude_none=True)
-
-        elif request.operation == "list":
-            managers = manager_registry.list_managers()
-
-            result = []
-            for manager in managers:
-                result.append({
-                    "name": manager.name,
-                    "workers": manager.workers,
-                    "delegation_strategy": manager.strategy.value,
-                    "worker_count": len(manager.workers),
-                })
-
-            logger.info(f"Listed {len(managers)} managers")
-            response = ManageManagersResponse(
-                operation=request.operation,
-                success=True,
-                data={"managers": result, "count": len(result)}
-            )
-            return response.model_dump_json(indent=2, exclude_none=True)
-
-        elif request.operation == "get_info":
-            if not request.manager_name:
-                response = ManageManagersResponse(
-                    operation=request.operation,
-                    success=False,
-                    error="manager_name is required for get_info operation"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            manager = manager_registry.get_manager(request.manager_name)
-            if not manager:
-                response = ManageManagersResponse(
-                    operation=request.operation,
-                    success=False,
-                    error=f"Manager '{request.manager_name}' not found"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            response = ManageManagersResponse(
-                operation=request.operation,
-                success=True,
-                data={
-                    "name": manager.name,
-                    "workers": manager.workers,
-                    "worker_roles": {k: v.value for k, v in manager.worker_roles.items()},
-                    "delegation_strategy": manager.strategy.value,
-                    "created_at": manager.created_at.isoformat(),
-                    "metadata": manager.metadata,
-                }
-            )
-            return response.model_dump_json(indent=2, exclude_none=True)
-
-        elif request.operation == "remove":
-            if not request.manager_name:
-                response = ManageManagersResponse(
-                    operation=request.operation,
-                    success=False,
-                    error="manager_name is required for remove operation"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            removed = manager_registry.remove_manager(request.manager_name)
-
-            if removed:
-                logger.info(f"Removed manager '{request.manager_name}'")
-            else:
-                logger.warning(f"Manager '{request.manager_name}' not found")
-
-            response = ManageManagersResponse(
-                operation=request.operation,
-                success=removed,
-                data={"manager_name": request.manager_name}
-            )
-            return response.model_dump_json(indent=2, exclude_none=True)
-
-        elif request.operation == "add_worker":
-            if not request.manager_name or not request.worker_name:
-                response = ManageManagersResponse(
-                    operation=request.operation,
-                    success=False,
-                    error="manager_name and worker_name are required for add_worker operation"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            manager = manager_registry.get_manager(request.manager_name)
-            if not manager:
-                response = ManageManagersResponse(
-                    operation=request.operation,
-                    success=False,
-                    error=f"Manager '{request.manager_name}' not found"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            role = ManagerSessionRole(request.worker_role) if request.worker_role else None
-            manager.add_worker(request.worker_name, role)
-
-            logger.info(f"Added worker '{request.worker_name}' to manager '{request.manager_name}'")
-
-            response = ManageManagersResponse(
-                operation=request.operation,
-                success=True,
-                data={
-                    "manager_name": request.manager_name,
-                    "worker_name": request.worker_name,
-                    "role": request.worker_role
-                }
-            )
-            return response.model_dump_json(indent=2, exclude_none=True)
-
-        elif request.operation == "remove_worker":
-            if not request.manager_name or not request.worker_name:
-                response = ManageManagersResponse(
-                    operation=request.operation,
-                    success=False,
-                    error="manager_name and worker_name are required for remove_worker operation"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            manager = manager_registry.get_manager(request.manager_name)
-            if not manager:
-                response = ManageManagersResponse(
-                    operation=request.operation,
-                    success=False,
-                    error=f"Manager '{request.manager_name}' not found"
-                )
-                return response.model_dump_json(indent=2, exclude_none=True)
-
-            removed = manager.remove_worker(request.worker_name)
-
-            if removed:
-                logger.info(f"Removed worker '{request.worker_name}' from manager '{request.manager_name}'")
-            else:
-                logger.warning(f"Worker '{request.worker_name}' not found in manager '{request.manager_name}'")
-
-            response = ManageManagersResponse(
-                operation=request.operation,
-                success=removed,
-                data={
-                    "manager_name": request.manager_name,
-                    "worker_name": request.worker_name
-                }
-            )
-            return response.model_dump_json(indent=2, exclude_none=True)
-
-        else:
-            response = ManageManagersResponse(
-                operation=request.operation,
-                success=False,
-                error=f"Unknown operation: {request.operation}"
-            )
-            return response.model_dump_json(indent=2, exclude_none=True)
-
-    except Exception as e:
-        logger.error(f"Error in manage_managers: {e}")
-        response = ManageManagersResponse(
-            operation=request.operation,
-            success=False,
-            error=str(e)
-        )
-        return response.model_dump_json(indent=2, exclude_none=True)
-
-
-async def delegate_task(
-    request: DelegateTaskRequest,
-    ctx: Context,
-) -> str:
-    """Delegate a task through a manager to an appropriate worker.
-
-    The manager selects a worker based on its delegation strategy and the
-    required role. The task is executed and optionally validated.
-
-    Args:
-        request: Task delegation request with manager, task, and options
-
-    Returns:
-        JSON with task execution result
-    """
-    terminal = ctx.request_context.lifespan_context["terminal"]
-    agent_registry = ctx.request_context.lifespan_context["agent_registry"]
-    manager_registry: ManagerRegistry = ctx.request_context.lifespan_context["manager_registry"]
-    logger = ctx.request_context.lifespan_context["logger"]
-
-    try:
-        manager = manager_registry.get_manager(request.manager)
+        manager = manager_registry.get_manager(manager_name)
         if not manager:
-            return json.dumps({"error": f"Manager '{request.manager}' not found"}, indent=2)
+            raise RuntimeError(f"Manager '{manager_name}' not found")
 
-        # Ensure callbacks are set up
-        _setup_manager_callbacks(manager, terminal, agent_registry, logger)
+        logger.info(f"managers GET: info for manager '{manager_name}'")
+        return {
+            "name": manager.name,
+            "workers": manager.workers,
+            "worker_roles": {k: v.value for k, v in manager.worker_roles.items()},
+            "delegation_strategy": manager.strategy.value,
+            "created_at": manager.created_at.isoformat(),
+            "metadata": manager.metadata,
+        }
 
-        # Convert role string to ManagerSessionRole if provided
-        role = ManagerSessionRole(request.role) if request.role else None
+    # ------------------------------- POST -------------------------------- #
 
-        # Delegate the task
-        result = await manager.delegate(
-            task=request.task,
-            required_role=role,
-            validation=request.validation,
-            timeout_seconds=request.timeout_seconds,
-            retry_count=request.retry_count,
+    async def on_post(self, ctx, definer, **params):
+        """Route POST by (definer, target) — create manager or add worker."""
+        target = params.get("target")
+
+        if definer == "CREATE" and target is None:
+            return await self._create_manager(ctx, **params)
+
+        if definer == "CREATE" and target == "workers":
+            return await self._add_worker(ctx, **params)
+
+        raise NotImplementedError(
+            f"POST+{definer} on target={target!r} not yet implemented"
         )
 
-        logger.info(f"Task delegated via manager '{request.manager}': {result.status.value}")
+    async def _create_manager(self, ctx, **params):
+        """POST /managers (CREATE) — create a new manager and wire callbacks."""
+        # Imports are lazy so tests that only exercise OPTIONS / list paths
+        # don't need the manager module to even be importable (it isn't — it
+        # always is — but keeping parity with teams style keeps this
+        # predictable).
+        from core.manager import DelegationStrategy
+        from core.manager import SessionRole as ManagerSessionRole
 
-        response = TaskResultResponse(
-            task_id=result.task_id,
-            task=result.task,
-            worker=result.worker,
-            status=result.status.value,
-            success=result.success,
-            output=result.output,
-            error=result.error,
-            duration_seconds=result.duration_seconds,
-            validation_passed=result.validation_passed,
-            validation_message=result.validation_message,
-        )
-        return response.model_dump_json(indent=2, exclude_none=True)
+        lifespan = ctx.request_context.lifespan_context
+        manager_registry = lifespan["manager_registry"]
+        terminal = lifespan["terminal"]
+        agent_registry = lifespan["agent_registry"]
+        logger = lifespan["logger"]
 
-    except Exception as e:
-        logger.error(f"Error delegating task: {e}")
-        return json.dumps({"error": str(e)}, indent=2)
+        manager_name = params.get("manager_name")
+        if not manager_name:
+            raise ValueError("create manager requires manager_name")
 
+        workers = params.get("workers", []) or []
+        delegation_strategy_raw = params.get("delegation_strategy", "role_based")
+        worker_roles_raw = params.get("worker_roles", {}) or {}
+        metadata = params.get("metadata", {}) or {}
 
-async def execute_plan(
-    request: ExecutePlanRequest,
-    ctx: Context,
-) -> str:
-    """Execute a multi-step task plan through a manager.
-
-    The manager orchestrates the execution of multiple steps, handling
-    dependencies and parallel execution as specified in the plan.
-
-    Args:
-        request: Plan execution request with manager and plan specification
-
-    Returns:
-        JSON with plan execution results
-    """
-    terminal = ctx.request_context.lifespan_context["terminal"]
-    agent_registry = ctx.request_context.lifespan_context["agent_registry"]
-    manager_registry: ManagerRegistry = ctx.request_context.lifespan_context["manager_registry"]
-    logger = ctx.request_context.lifespan_context["logger"]
-
-    try:
-        manager = manager_registry.get_manager(request.manager)
-        if not manager:
-            return json.dumps({"error": f"Manager '{request.manager}' not found"}, indent=2)
-
-        # Ensure callbacks are set up
-        _setup_manager_callbacks(manager, terminal, agent_registry, logger)
-
-        # Convert plan spec to TaskPlan
-        steps = []
-        for step_spec in request.plan.steps:
-            role = ManagerSessionRole(step_spec.role) if step_spec.role else None
-            step = TaskStep(
-                id=step_spec.id,
-                task=step_spec.task,
-                role=role,
-                optional=step_spec.optional,
-                depends_on=step_spec.depends_on,
-                validation=step_spec.validation,
-                timeout_seconds=step_spec.timeout_seconds,
-                retry_count=step_spec.retry_count,
+        # Convert worker_roles values from strings to ManagerSessionRole enums.
+        worker_roles = {
+            name: (
+                ManagerSessionRole(role) if isinstance(role, str) else role
             )
-            steps.append(step)
+            for name, role in worker_roles_raw.items()
+        }
 
-        plan = TaskPlan(
-            name=request.plan.name,
-            description=request.plan.description,
-            steps=steps,
-            parallel_groups=request.plan.parallel_groups,
-            stop_on_failure=request.plan.stop_on_failure,
+        # Convert delegation_strategy string to DelegationStrategy enum.
+        delegation_strategy = (
+            DelegationStrategy(delegation_strategy_raw)
+            if isinstance(delegation_strategy_raw, str)
+            else delegation_strategy_raw
         )
 
-        # Execute the plan
-        plan_result = await manager.orchestrate(plan)
+        manager = manager_registry.create_manager(
+            name=manager_name,
+            workers=workers,
+            delegation_strategy=delegation_strategy,
+            worker_roles=worker_roles,
+            metadata=metadata,
+        )
+
+        # Set up execution callbacks. The shared helper wires the manager's
+        # ``_execute_callback`` to drive workers through the terminal.
+        from iterm_mcpy.tools._callbacks import _setup_manager_callbacks
+        _setup_manager_callbacks(manager, terminal, agent_registry, logger)
 
         logger.info(
-            f"Plan '{plan.name}' completed: success={plan_result.success}, "
-            f"steps={len(plan_result.results)}"
+            f"managers CREATE: created manager '{manager.name}' with "
+            f"{len(workers)} workers (strategy={manager.strategy.value})"
+        )
+        return {
+            "name": manager.name,
+            "workers": manager.workers,
+            "delegation_strategy": manager.strategy.value,
+            "created": True,
+        }
+
+    async def _add_worker(self, ctx, **params):
+        """POST /managers/{name}/workers (CREATE) — add a worker to a manager."""
+        from core.manager import SessionRole as ManagerSessionRole
+
+        lifespan = ctx.request_context.lifespan_context
+        manager_registry = lifespan["manager_registry"]
+        logger = lifespan["logger"]
+
+        manager_name = params.get("manager_name")
+        worker_name = params.get("worker_name")
+        if not manager_name:
+            raise ValueError("add worker requires manager_name")
+        if not worker_name:
+            raise ValueError("add worker requires worker_name")
+
+        manager = manager_registry.get_manager(manager_name)
+        if not manager:
+            raise RuntimeError(f"Manager '{manager_name}' not found")
+
+        worker_role_raw = params.get("worker_role")
+        role = (
+            ManagerSessionRole(worker_role_raw)
+            if worker_role_raw is not None
+            else None
+        )
+        manager.add_worker(worker_name, role)
+
+        logger.info(
+            f"managers CREATE workers: added worker '{worker_name}' to "
+            f"manager '{manager_name}'"
+        )
+        return {
+            "manager_name": manager_name,
+            "worker_name": worker_name,
+            "role": worker_role_raw,
+            "added": True,
+        }
+
+    # ------------------------------- DELETE ------------------------------ #
+
+    async def on_delete(self, ctx, **params):
+        """Route DELETE by `target` — remove manager or remove worker."""
+        target = params.get("target")
+
+        if target is None:
+            return await self._remove_manager(ctx, **params)
+
+        if target == "workers":
+            return await self._remove_worker(ctx, **params)
+
+        raise NotImplementedError(
+            f"DELETE target={target!r} not yet implemented"
         )
 
-        # Convert results to response
-        result_responses = []
-        for result in plan_result.results:
-            result_responses.append(TaskResultResponse(
-                task_id=result.task_id,
-                task=result.task,
-                worker=result.worker,
-                status=result.status.value,
-                success=result.success,
-                output=result.output,
-                error=result.error,
-                duration_seconds=result.duration_seconds,
-                validation_passed=result.validation_passed,
-                validation_message=result.validation_message,
-            ))
+    async def _remove_manager(self, ctx, **params):
+        """DELETE /managers/{name} — remove a manager."""
+        lifespan = ctx.request_context.lifespan_context
+        manager_registry = lifespan["manager_registry"]
+        logger = lifespan["logger"]
 
-        response = PlanResultResponse(
-            plan_name=plan_result.plan_name,
-            success=plan_result.success,
-            results=result_responses,
-            duration_seconds=plan_result.duration_seconds,
-            stopped_early=plan_result.stopped_early,
-            stop_reason=plan_result.stop_reason,
+        manager_name = params.get("manager_name")
+        if not manager_name:
+            raise ValueError("remove manager requires manager_name")
+
+        removed = manager_registry.remove_manager(manager_name)
+        if not removed:
+            raise RuntimeError(f"Manager '{manager_name}' not found")
+
+        logger.info(f"managers DELETE: removed manager '{manager_name}'")
+        return {"manager_name": manager_name, "removed": True}
+
+    async def _remove_worker(self, ctx, **params):
+        """DELETE /managers/{name}/workers — remove a worker from a manager."""
+        lifespan = ctx.request_context.lifespan_context
+        manager_registry = lifespan["manager_registry"]
+        logger = lifespan["logger"]
+
+        manager_name = params.get("manager_name")
+        worker_name = params.get("worker_name")
+        if not manager_name:
+            raise ValueError("remove worker requires manager_name")
+        if not worker_name:
+            raise ValueError("remove worker requires worker_name")
+
+        manager = manager_registry.get_manager(manager_name)
+        if not manager:
+            raise RuntimeError(f"Manager '{manager_name}' not found")
+
+        removed = manager.remove_worker(worker_name)
+        if not removed:
+            raise RuntimeError(
+                f"Worker '{worker_name}' not found in manager '{manager_name}'"
+            )
+
+        logger.info(
+            f"managers DELETE workers: removed worker '{worker_name}' "
+            f"from manager '{manager_name}'"
         )
-        return response.model_dump_json(indent=2, exclude_none=True)
+        return {
+            "manager_name": manager_name,
+            "worker_name": worker_name,
+            "removed": True,
+        }
 
-    except Exception as e:
-        logger.error(f"Error executing plan: {e}")
-        return json.dumps({"error": str(e)}, indent=2)
+
+_dispatcher = ManagersDispatcher()
+
+
+async def managers(
+    ctx: Context,
+    op: str = "GET",
+    definer: Optional[str] = None,
+    target: Optional[str] = None,
+    manager_name: Optional[str] = None,
+    worker_name: Optional[str] = None,
+    workers: Optional[List[str]] = None,
+    delegation_strategy: Optional[str] = None,
+    worker_roles: Optional[Dict[str, str]] = None,
+    worker_role: Optional[str] = None,
+    metadata: Optional[Dict[str, str]] = None,
+) -> str:
+    """Manager agent management: list, get info, create, remove, add/remove
+    workers, HEAD, OPTIONS.
+
+    Use op="list" (or op="GET") to list all managers with their worker
+      counts and delegation strategies.
+    Use op="GET" + manager_name=<name> to get detailed info for a single
+      manager (aka the legacy get_info operation).
+    Use op="create" (or op="POST" + definer="CREATE") + manager_name
+      (+ workers?/delegation_strategy?/worker_roles?/metadata?) to create
+      a new manager.
+    Use op="create" + target="workers" + manager_name + worker_name
+      (+ worker_role?) to add a worker to an existing manager.
+    Use op="delete" (or op="DELETE") + manager_name to remove a manager.
+    Use op="delete" + target="workers" + manager_name + worker_name to
+      remove a worker from a manager.
+    Use op="HEAD" (or "peek"/"summary") for a compact list.
+    Use op="OPTIONS" (or "schema") to discover the tool's surface.
+
+    Args:
+        op: HTTP method or friendly verb (list/create/remove/add/delete).
+        definer: Optional definer (CREATE for POST).
+        target: None for manager itself, 'workers' for worker membership.
+        manager_name: Name of the manager.
+        worker_name: Name of the worker (for add/remove worker).
+        workers: Initial worker list (for create).
+        delegation_strategy: Delegation strategy string (for create).
+        worker_roles: Mapping of worker name -> role string (for create).
+        worker_role: Role for a single worker (for add worker).
+        metadata: Additional metadata dict (for create).
+
+    This is SP2's fourth method-semantic collection tool. It coexists with
+    the legacy ``manage_managers`` tool and will eventually replace it.
+    Note: ``delegate_task`` and ``execute_plan`` are action tools and remain
+    separate; they will be handled by Task 14.
+    """
+    raw_params = {
+        "target": target,
+        "manager_name": manager_name,
+        "worker_name": worker_name,
+        "workers": workers,
+        "delegation_strategy": delegation_strategy,
+        "worker_roles": worker_roles,
+        "worker_role": worker_role,
+        "metadata": metadata,
+    }
+    params = {k: v for k, v in raw_params.items() if v is not None}
+
+    return await _dispatcher.dispatch(ctx=ctx, op=op, definer=definer, **params)
 
 
 def register(mcp):
-    """Register manager agent tools with the FastMCP instance."""
-    mcp.tool()(manage_managers)
-    mcp.tool()(delegate_task)
-    mcp.tool()(execute_plan)
+    """Register the managers dispatcher tool.
+
+    Named ``managers`` to coexist with the legacy ``manage_managers``
+    tool during the SP2 coexistence period. Final cutover (renaming to
+    ``managers``) happens at the end of SP2.
+    """
+    mcp.tool(name="managers")(managers)

@@ -1,4 +1,4 @@
-"""SP2 `orchestrate_v2` action tool — Task 13/14.
+"""SP2 `orchestrate` action tool — Task 13/14.
 
 Replaces the legacy ``orchestrate_playbook`` tool. Executes a high-level
 playbook (layout + commands + cascade + reads) via a single POST+INVOKE
@@ -27,7 +27,7 @@ from iterm_mcpy.helpers import (
 from iterm_mcpy.responses import err_envelope, ok_envelope
 
 
-async def orchestrate_v2(
+async def orchestrate(
     ctx: Context,
     op: str = "POST",
     definer: Optional[str] = None,
@@ -60,7 +60,7 @@ async def orchestrate_v2(
             method=resolution.method,
             definer=resolution.definer,
             error=(
-                f"orchestrate_v2 only supports POST+INVOKE "
+                f"orchestrate only supports POST+INVOKE "
                 f"(got {resolution.method}+{resolution.definer})"
             ),
         )
@@ -68,7 +68,7 @@ async def orchestrate_v2(
     if playbook is None:
         return err_envelope(
             method="POST", definer="INVOKE",
-            error="orchestrate_v2 requires 'playbook' parameter",
+            error="orchestrate requires 'playbook' parameter",
         )
 
     try:
@@ -123,7 +123,7 @@ async def orchestrate_v2(
             )
 
         logger.info(
-            "orchestrate_v2: layout=%s commands=%s cascade=%s reads=%s",
+            "orchestrate: layout=%s commands=%s cascade=%s reads=%s",
             bool(response.layout),
             len(response.commands),
             bool(response.cascade),
@@ -136,5 +136,5 @@ async def orchestrate_v2(
 
 
 def register(mcp):
-    """Register the orchestrate_v2 action tool."""
-    mcp.tool(name="orchestrate_v2")(orchestrate_v2)
+    """Register the orchestrate action tool."""
+    mcp.tool(name="orchestrate")(orchestrate)

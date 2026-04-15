@@ -1,4 +1,4 @@
-"""SP2 `wait_for_v2` action tool — Task 13/14.
+"""SP2 `wait_for` action tool — Task 13/14.
 
 Replaces the legacy ``wait_for_agent`` tool. GET-style long-poll that waits
 until an agent's session becomes idle or the timeout elapses.
@@ -55,7 +55,7 @@ async def _wait_for_agent_impl(
             can_continue_waiting=False,
         )
 
-    logger.info(f"wait_for_v2: waiting up to {wait_up_to}s for agent {agent_name}")
+    logger.info(f"wait_for: waiting up to {wait_up_to}s for agent {agent_name}")
 
     initial_output = await session.get_screen_contents()
     start_time = time.time()
@@ -84,7 +84,7 @@ async def _wait_for_agent_impl(
                 context=summary,
             )
 
-            logger.info(f"wait_for_v2: {agent_name} timed out after {elapsed:.1f}s")
+            logger.info(f"wait_for: {agent_name} timed out after {elapsed:.1f}s")
             return WaitResult(
                 agent=agent_name,
                 completed=False,
@@ -105,7 +105,7 @@ async def _wait_for_agent_impl(
                     level="success",
                     summary=f"Completed after {int(elapsed)}s",
                 )
-                logger.info(f"wait_for_v2: {agent_name} completed after {elapsed:.1f}s")
+                logger.info(f"wait_for: {agent_name} completed after {elapsed:.1f}s")
                 return WaitResult(
                     agent=agent_name,
                     completed=True,
@@ -121,7 +121,7 @@ async def _wait_for_agent_impl(
         await asyncio.sleep(poll_interval)
 
 
-async def wait_for_v2(
+async def wait_for(
     ctx: Context,
     op: str = "GET",
     agent_name: Optional[str] = None,
@@ -152,13 +152,13 @@ async def wait_for_v2(
         return err_envelope(
             method=resolution.method,
             definer=resolution.definer,
-            error=f"wait_for_v2 only supports GET (got {resolution.method})",
+            error=f"wait_for only supports GET (got {resolution.method})",
         )
 
     if not agent_name:
         return err_envelope(
             method="GET",
-            error="wait_for_v2 requires 'agent_name' parameter",
+            error="wait_for requires 'agent_name' parameter",
         )
 
     try:
@@ -167,7 +167,7 @@ async def wait_for_v2(
         if wait_up_to < 1 or wait_up_to > 600:
             return err_envelope(
                 method="GET",
-                error="wait_for_v2: wait_up_to must be between 1 and 600 seconds",
+                error="wait_for: wait_up_to must be between 1 and 600 seconds",
             )
 
         result = await _wait_for_agent_impl(
@@ -183,5 +183,5 @@ async def wait_for_v2(
 
 
 def register(mcp):
-    """Register the wait_for_v2 action tool."""
-    mcp.tool(name="wait_for_v2")(wait_for_v2)
+    """Register the wait_for action tool."""
+    mcp.tool(name="wait_for")(wait_for)

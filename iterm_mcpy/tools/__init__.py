@@ -1,60 +1,31 @@
-"""iTerm MCP tool modules.
+"""iTerm MCP tool modules (SP2 method-semantic surface).
 
-Each module contains tool functions for a specific domain and exposes
-a register(mcp) function that registers them with the FastMCP instance.
+Each module exposes a ``register(mcp)`` function that registers its
+single tool with the FastMCP instance. The 15 tools together cover the
+full method-semantic API:
+
+  Collections (9): sessions, agents, teams, managers, feedback, memory,
+                   services, roles, workflows
+  Actions (6):     messages, orchestrate, delegate, wait_for, subscribe,
+                   telemetry
 """
 
 
 def register_all(mcp):
-    """Register all tool modules with the FastMCP instance.
+    """Register all 15 SP2 tools with the FastMCP instance.
 
     Called from fastmcp_server.py after mcp creation and before run().
     """
     from . import (
-        memory,
-        agent_hooks,
-        telemetry,
-        workflows,
-        services,
-        roles,
-        notifications,
-        wait,
-        feedback,
-        managers,
-        agents,
-        control,
-        monitoring,
-        modifications,
-        orchestration,
-        commands,
-        sessions,
-        sessions_v2,     # SP2 method-semantic tool (coexists with legacy sessions).
-        agents_v2,       # SP2 method-semantic tool (coexists with legacy agents).
-        teams_v2,        # SP2 method-semantic tool (coexists with legacy manage_teams).
-        managers_v2,     # SP2 method-semantic tool (coexists with legacy manage_managers).
-        feedback_v2,     # SP2 method-semantic tool (coexists with legacy feedback tools).
-        memory_v2,       # SP2 method-semantic tool (coexists with legacy manage_memory).
-        services_v2,     # SP2 method-semantic tool (coexists with legacy manage_services).
-        roles_v2,        # SP2 method-semantic tool (coexists with legacy list_available_roles/check_tool_permission).
-        workflows_v2,    # SP2 method-semantic tool (coexists with legacy trigger/list/get_history workflow tools).
-        messages_v2,     # SP2 action tool (coexists with legacy send_cascade_message/send_hierarchical_message).
-        orchestrate_v2,  # SP2 action tool (coexists with legacy orchestrate_playbook).
-        delegate_v2,     # SP2 action tool (coexists with legacy delegate_task/execute_plan).
-        wait_for_v2,     # SP2 action tool (coexists with legacy wait_for_agent).
-        subscribe_v2,    # SP2 action tool (coexists with legacy subscribe_to_output_pattern).
-        telemetry_v2,    # SP2 action tool (coexists with legacy start_telemetry_dashboard).
+        sessions, agents, teams, managers,
+        feedback, memory, services, roles, workflows,
+        messages, orchestrate, delegate, wait_for, subscribe, telemetry,
     )
 
     _MODULES = [
-        memory, agent_hooks, telemetry, workflows,
-        services, roles, notifications, wait,
-        feedback, managers, agents, control,
-        monitoring, modifications, orchestration,
-        commands, sessions, sessions_v2, agents_v2,
-        teams_v2, managers_v2, feedback_v2, memory_v2,
-        services_v2, roles_v2, workflows_v2,
-        messages_v2, orchestrate_v2, delegate_v2,
-        wait_for_v2, subscribe_v2, telemetry_v2,
+        sessions, agents, teams, managers,
+        feedback, memory, services, roles, workflows,
+        messages, orchestrate, delegate, wait_for, subscribe, telemetry,
     ]
 
     for mod in _MODULES:

@@ -1,23 +1,37 @@
-"""Memory store tools.
+"""SP2 method-semantic `memory` tool — Task 9.
 
-Provides the manage_memory tool that consolidates 8 memory operations
-(store, retrieve, search, list_keys, list_namespaces, delete, clear, stats)
-into a single tool. Includes private validators for safe namespace and key
-characters.
+Sixth SP2 collection tool (after sessions + agents + teams +
+managers + feedback). Replaces the legacy ``manage_memory`` tool's
+8 operations:
+
+    - store            -> POST + CREATE      /memory
+    - retrieve         -> GET                /memory
+    - search           -> GET                /memory  (target='search')
+    - list_keys        -> GET                /memory  (target='keys')
+    - list_namespaces  -> GET                /memory  (target='namespaces')
+    - stats            -> GET                /memory  (target='stats')
+    - delete           -> DELETE             /memory/{namespace}/{key}
+    - clear            -> DELETE             /memory  (target='namespace',
+                                                       confirm=true)
+
+Registered under the provisional name ``memory`` to coexist with the
+legacy ``manage_memory`` tool; the cutover (rename to ``memory`` and
+unregister the legacy tool) happens at the end of SP2.
+
+The module-local validators ``_validate_namespace`` and ``_validate_key``
+enforce safe-character conventions on namespace parts and keys before
+hitting the memory store.
 """
-
 import re
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import Context
 
-from core.models import (
-    ManageMemoryRequest,
-    ManageMemoryResponse,
-)
+from iterm_mcpy.dispatcher import MethodDispatcher
 
-# Pattern for safe namespace and key characters
-# Allows alphanumeric, underscore, hyphen, and dot
+
+# Pattern for safe namespace and key characters.
+# Allows alphanumeric, underscore, hyphen, and dot.
 _SAFE_MEMORY_PATTERN = re.compile(r'^[a-zA-Z0-9_\-\.]+$')
 
 
@@ -59,246 +73,428 @@ def _validate_key(key: str) -> None:
         )
 
 
-async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
-    """Unified memory store operations - consolidates 8 memory tools into one.
+class MemoryDispatcher(MethodDispatcher):
+    """Dispatcher for the `memory` collection (SP2 method-semantic)."""
 
-    Operations:
-    - store: Save a value (requires namespace, key, value; optional metadata)
-    - retrieve: Get a value (requires namespace, key)
-    - search: Full-text search (requires namespace, query; optional limit)
-    - list_keys: List all keys in namespace (requires namespace)
-    - list_namespaces: List namespaces (optional namespace as prefix filter)
-    - delete: Delete a key (requires namespace, key)
-    - clear: Clear namespace (requires namespace, confirm=True)
-    - stats: Get store statistics (no params required)
+    collection = "memory"
+
+    METHODS = {
+        "GET": {
+            "aliases": ["retrieve", "get", "list", "search", "read", "query"],
+            "params": [
+                "target=None | 'search' | 'keys' | 'namespaces' | 'stats'",
+                # retrieve (target=None + namespace + key):
+                "namespace?=[str]",
+                "key?",
+                # search (target='search'):
+                "query?",
+                "limit?=10",
+                # list_namespaces (target='namespaces'):
+                "prefix?=[str]  (via namespace param)",
+            ],
+            "description": (
+                "Retrieve a value (no target), run full-text search "
+                "(target='search'), list keys in a namespace "
+                "(target='keys'), list namespaces with optional prefix "
+                "(target='namespaces'), or get store stats (target='stats')."
+            ),
+        },
+        "POST": {
+            "definers": {
+                "CREATE": {
+                    "aliases": ["store", "create", "add"],
+                    "params": [
+                        "namespace",
+                        "key",
+                        "value",
+                        "metadata?={...}",
+                    ],
+                    "description": (
+                        "Store a value at namespace/key with optional metadata."
+                    ),
+                },
+            },
+        },
+        "DELETE": {
+            "aliases": ["delete", "remove", "clear"],
+            "params": [
+                "target=None | target='namespace'",
+                # target=None (delete single key):
+                "namespace",
+                "key?",
+                # target='namespace' (clear namespace):
+                "confirm=true (required for clear)",
+            ],
+            "description": (
+                "Delete a single key (no target + namespace + key), or "
+                "clear an entire namespace (target='namespace' + "
+                "confirm=true)."
+            ),
+        },
+        "HEAD": {"compact_fields": ["namespace", "key"]},
+        "OPTIONS": {"description": "Return this schema."},
+    }
+
+    sub_resources = ["namespaces", "keys", "stats"]
+
+    # -------------------------------- GET -------------------------------- #
+
+    async def on_get(self, ctx, **params):
+        """Route GET by `target` — retrieve / search / keys / namespaces / stats."""
+        target = params.get("target")
+        if target == "search":
+            return await self._search(ctx, **params)
+        if target == "keys":
+            return await self._list_keys(ctx, **params)
+        if target == "namespaces":
+            return await self._list_namespaces(ctx, **params)
+        if target == "stats":
+            return await self._stats(ctx, **params)
+        # Default: retrieve by namespace + key
+        return await self._retrieve(ctx, **params)
+
+    async def _retrieve(self, ctx, **params):
+        """GET /memory — retrieve a memory by namespace + key."""
+        namespace = params.get("namespace")
+        key = params.get("key")
+        if not namespace:
+            raise ValueError("retrieve requires namespace")
+        if not key:
+            raise ValueError("retrieve requires key")
+
+        _validate_namespace(namespace)
+        _validate_key(key)
+
+        lifespan = ctx.request_context.lifespan_context
+        memory_store = lifespan["memory_store"]
+        logger = lifespan["logger"]
+
+        memory = await memory_store.retrieve(tuple(namespace), key)
+
+        if memory:
+            logger.info(
+                f"memory GET: retrieved {'/'.join(namespace)}/{key}"
+            )
+            return {
+                "found": True,
+                "key": memory.key,
+                "value": memory.value,
+                "timestamp": memory.timestamp.isoformat(),
+                "metadata": memory.metadata,
+                "namespace": list(memory.namespace),
+            }
+        logger.info(
+            f"memory GET: not found {'/'.join(namespace)}/{key}"
+        )
+        return {"found": False, "namespace": namespace, "key": key}
+
+    async def _search(self, ctx, **params):
+        """GET /memory?target=search — full-text search within a namespace."""
+        namespace = params.get("namespace")
+        query = params.get("query")
+        limit = params.get("limit", 10)
+        if not namespace:
+            raise ValueError("search requires namespace")
+        if not query:
+            raise ValueError("search requires query")
+
+        _validate_namespace(namespace)
+
+        lifespan = ctx.request_context.lifespan_context
+        memory_store = lifespan["memory_store"]
+        logger = lifespan["logger"]
+
+        results = await memory_store.search(tuple(namespace), query, limit)
+        logger.info(
+            f"memory GET search: '{query}' in "
+            f"{'/'.join(namespace)} -> {len(results)} results"
+        )
+        return {
+            "query": query,
+            "namespace": namespace,
+            "count": len(results),
+            "results": [
+                {
+                    "key": r.memory.key,
+                    "value": r.memory.value,
+                    "score": r.score,
+                    "match_context": r.match_context,
+                    "timestamp": r.memory.timestamp.isoformat(),
+                    "metadata": r.memory.metadata,
+                    "namespace": list(r.memory.namespace),
+                }
+                for r in results
+            ],
+        }
+
+    async def _list_keys(self, ctx, **params):
+        """GET /memory?target=keys — list all keys in a namespace."""
+        namespace = params.get("namespace")
+        if not namespace:
+            raise ValueError("list_keys requires namespace")
+
+        _validate_namespace(namespace)
+
+        lifespan = ctx.request_context.lifespan_context
+        memory_store = lifespan["memory_store"]
+        logger = lifespan["logger"]
+
+        keys = await memory_store.list_keys(tuple(namespace))
+        logger.info(
+            f"memory GET keys: {len(keys)} in {'/'.join(namespace)}"
+        )
+        return {"namespace": namespace, "count": len(keys), "keys": keys}
+
+    async def _list_namespaces(self, ctx, **params):
+        """GET /memory?target=namespaces — list namespaces (optional prefix)."""
+        namespace = params.get("namespace")
+        if namespace:
+            _validate_namespace(namespace)
+
+        lifespan = ctx.request_context.lifespan_context
+        memory_store = lifespan["memory_store"]
+        logger = lifespan["logger"]
+
+        prefix_tuple = tuple(namespace) if namespace else None
+        namespaces = await memory_store.list_namespaces(prefix_tuple)
+        logger.info(
+            f"memory GET namespaces: {len(namespaces)} listed"
+        )
+        return {
+            "prefix": namespace,
+            "count": len(namespaces),
+            "namespaces": [list(ns) for ns in namespaces],
+        }
+
+    async def _stats(self, ctx, **params):
+        """GET /memory?target=stats — memory store statistics."""
+        lifespan = ctx.request_context.lifespan_context
+        memory_store = lifespan["memory_store"]
+        logger = lifespan["logger"]
+
+        stats = await memory_store.get_stats()
+        logger.info("memory GET stats: returning stats")
+        return stats
+
+    # ------------------------------- POST -------------------------------- #
+
+    async def on_post(self, ctx, definer, **params):
+        """Route POST by (definer) — only CREATE (store) is supported."""
+        if definer == "CREATE":
+            return await self._store(ctx, **params)
+        raise NotImplementedError(
+            f"POST+{definer} not yet implemented for memory"
+        )
+
+    async def _store(self, ctx, **params):
+        """POST /memory (CREATE) — store a value at namespace/key."""
+        namespace = params.get("namespace")
+        key = params.get("key")
+        value = params.get("value")
+        metadata = params.get("metadata")
+
+        if not namespace:
+            raise ValueError("store requires namespace")
+        if not key:
+            raise ValueError("store requires key")
+        if value is None:
+            raise ValueError("store requires value")
+
+        _validate_namespace(namespace)
+        _validate_key(key)
+
+        lifespan = ctx.request_context.lifespan_context
+        memory_store = lifespan["memory_store"]
+        logger = lifespan["logger"]
+
+        await memory_store.store(tuple(namespace), key, value, metadata)
+        logger.info(f"memory CREATE: stored {'/'.join(namespace)}/{key}")
+        return {
+            "status": "stored",
+            "namespace": namespace,
+            "key": key,
+            "metadata": metadata or {},
+        }
+
+    # ------------------------------- DELETE ------------------------------ #
+
+    async def on_delete(self, ctx, **params):
+        """Route DELETE by `target` — delete single key or clear namespace."""
+        target = params.get("target")
+        if target == "namespace":
+            return await self._clear_namespace(ctx, **params)
+        return await self._delete_key(ctx, **params)
+
+    async def _delete_key(self, ctx, **params):
+        """DELETE /memory/{namespace}/{key} — delete a single memory."""
+        namespace = params.get("namespace")
+        key = params.get("key")
+        if not namespace:
+            raise ValueError("delete requires namespace")
+        if not key:
+            raise ValueError("delete requires key")
+
+        _validate_namespace(namespace)
+        _validate_key(key)
+
+        lifespan = ctx.request_context.lifespan_context
+        memory_store = lifespan["memory_store"]
+        logger = lifespan["logger"]
+
+        deleted = await memory_store.delete(tuple(namespace), key)
+        if deleted:
+            logger.info(
+                f"memory DELETE: removed {'/'.join(namespace)}/{key}"
+            )
+        else:
+            logger.info(
+                f"memory DELETE: not found {'/'.join(namespace)}/{key}"
+            )
+        return {
+            "deleted": deleted,
+            "namespace": namespace,
+            "key": key,
+            "message": None if deleted else "Memory not found",
+        }
+
+    async def _clear_namespace(self, ctx, **params):
+        """DELETE /memory?target=namespace — clear an entire namespace."""
+        namespace = params.get("namespace")
+        confirm = params.get("confirm", False)
+        if not namespace:
+            raise ValueError("clear namespace requires namespace")
+
+        _validate_namespace(namespace)
+
+        if not confirm:
+            raise ValueError(
+                "Confirmation required. Set confirm=true to clear the "
+                "namespace. This permanently deletes all memories within it."
+            )
+
+        lifespan = ctx.request_context.lifespan_context
+        memory_store = lifespan["memory_store"]
+        logger = lifespan["logger"]
+
+        count = await memory_store.clear_namespace(tuple(namespace))
+        logger.info(
+            f"memory DELETE namespace: cleared "
+            f"{'/'.join(namespace)} ({count} memories)"
+        )
+        return {
+            "cleared": True,
+            "namespace": namespace,
+            "deleted_count": count,
+        }
+
+
+_dispatcher = MemoryDispatcher()
+
+
+# Legacy `manage_memory` op strings that aren't in the central VERB_ATLAS.
+# Mapped locally to (method, definer, implied_target) so callers can keep
+# using the legacy vocabulary during the SP2 coexistence period. Verbs that
+# already exist in VERB_ATLAS (retrieve / search / delete) pass through
+# untouched.
+_LEGACY_OP_MAP: dict[str, tuple[str, Optional[str], Optional[str]]] = {
+    # store -> POST+CREATE
+    "store": ("POST", "CREATE", None),
+    # list_keys / keys -> GET target='keys'
+    "list_keys": ("GET", None, "keys"),
+    # list_namespaces / namespaces -> GET target='namespaces'
+    "list_namespaces": ("GET", None, "namespaces"),
+    # stats -> GET target='stats'
+    "stats": ("GET", None, "stats"),
+    # clear -> DELETE target='namespace' (destructive, needs confirm=true)
+    "clear": ("DELETE", None, "namespace"),
+}
+
+
+async def memory(
+    ctx: Context,
+    op: str = "GET",
+    definer: Optional[str] = None,
+    target: Optional[str] = None,
+    namespace: Optional[List[str]] = None,
+    key: Optional[str] = None,
+    value: Optional[Any] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    query: Optional[str] = None,
+    limit: int = 10,
+    confirm: bool = False,
+) -> str:
+    """Memory store ops: retrieve, store, search, list, delete, clear, stats.
+
+    Use op="retrieve" (or op="GET") + namespace + key to fetch one value.
+    Use op="search" (or op="GET" + target="search") + namespace + query
+      (+ limit?) to run a full-text search.
+    Use op="GET" + target="keys" + namespace to list keys in a namespace.
+    Use op="GET" + target="namespaces" (+ namespace as prefix?) to list
+      namespaces, optionally filtered by a namespace prefix.
+    Use op="GET" + target="stats" to get memory store statistics.
+    Use op="store" (or op="POST" + definer="CREATE") + namespace + key +
+      value (+ metadata?) to store a value.
+    Use op="delete" (or op="DELETE") + namespace + key to delete a single
+      memory.
+    Use op="DELETE" + target="namespace" + namespace + confirm=true to
+      clear an entire namespace (destructive).
+    Use op="HEAD" (or "peek") for a compact summary envelope.
+    Use op="OPTIONS" (or "schema") to discover the tool's surface.
 
     Args:
-        request: ManageMemoryRequest with operation and relevant parameters
+        op: HTTP method or friendly verb.
+        definer: Explicit definer (only CREATE applies here).
+        target: Sub-resource: 'search', 'keys', 'namespaces', 'stats' for
+            GET, or 'namespace' for DELETE. Omit for retrieve / delete key
+            / store.
+        namespace: Hierarchical namespace (e.g., ['project-x', 'agent']).
+            For list_namespaces, acts as an optional prefix filter.
+        key: Key within the namespace (retrieve / store / delete).
+        value: JSON-serializable value to store (store).
+        metadata: Optional metadata dict attached to a stored value.
+        query: Full-text search query (search).
+        limit: Max results for search (default 10).
+        confirm: Required True to clear a namespace (target='namespace').
 
-    Returns:
-        JSON with operation result
+    This is SP2's sixth method-semantic collection tool. It coexists with
+    the legacy ``manage_memory`` tool and will eventually replace it.
     """
-    memory_store_instance = ctx.request_context.lifespan_context.get("memory_store")
-    logger = ctx.request_context.lifespan_context["logger"]
+    # Translate memory-specific legacy op strings (store/clear/list_keys/
+    # list_namespaces/stats) to their (method, definer, target) triple so
+    # the shared dispatcher + VERB_ATLAS stays clean.
+    legacy = _LEGACY_OP_MAP.get(op.lower())
+    if legacy is not None:
+        method, mapped_definer, mapped_target = legacy
+        op = method
+        # Explicit definer wins over the mapping's default.
+        if mapped_definer is not None and definer is None:
+            definer = mapped_definer
+        # Explicit target wins over the mapping's implied target.
+        if mapped_target is not None and target is None:
+            target = mapped_target
 
-    if not memory_store_instance:
-        return ManageMemoryResponse(
-            operation=request.operation,
-            success=False,
-            error="Memory store not initialized"
-        ).model_dump_json(indent=2, exclude_none=True)
+    raw_params = {
+        "target": target,
+        "namespace": namespace,
+        "key": key,
+        "value": value,
+        "metadata": metadata,
+        "query": query,
+        "limit": limit,
+        "confirm": confirm,
+    }
+    # Keep `limit` and `confirm` even at defaults — handlers need them.
+    # Filter out params the user explicitly didn't set (None values).
+    params = {k: v for k, v in raw_params.items() if v is not None}
 
-    try:
-        op = request.operation
-
-        # STORE operation
-        if op == "store":
-            if not request.namespace:
-                raise ValueError("namespace is required for store operation")
-            if not request.key:
-                raise ValueError("key is required for store operation")
-            if request.value is None:
-                raise ValueError("value is required for store operation")
-
-            _validate_namespace(request.namespace)
-            _validate_key(request.key)
-            ns_tuple = tuple(request.namespace)
-            await memory_store_instance.store(ns_tuple, request.key, request.value, request.metadata)
-            logger.info(f"Stored memory: {'/'.join(request.namespace)}/{request.key}")
-
-            return ManageMemoryResponse(
-                operation=op,
-                success=True,
-                data={
-                    "status": "stored",
-                    "namespace": request.namespace,
-                    "key": request.key,
-                    "metadata": request.metadata or {}
-                }
-            ).model_dump_json(indent=2, exclude_none=True)
-
-        # RETRIEVE operation
-        elif op == "retrieve":
-            if not request.namespace:
-                raise ValueError("namespace is required for retrieve operation")
-            if not request.key:
-                raise ValueError("key is required for retrieve operation")
-
-            _validate_namespace(request.namespace)
-            _validate_key(request.key)
-            ns_tuple = tuple(request.namespace)
-            memory = await memory_store_instance.retrieve(ns_tuple, request.key)
-
-            if memory:
-                logger.info(f"Retrieved memory: {'/'.join(request.namespace)}/{request.key}")
-                return ManageMemoryResponse(
-                    operation=op,
-                    success=True,
-                    data={
-                        "found": True,
-                        "key": memory.key,
-                        "value": memory.value,
-                        "timestamp": memory.timestamp.isoformat(),
-                        "metadata": memory.metadata,
-                        "namespace": list(memory.namespace)
-                    }
-                ).model_dump_json(indent=2, exclude_none=True)
-            else:
-                logger.info(f"Memory not found: {'/'.join(request.namespace)}/{request.key}")
-                return ManageMemoryResponse(
-                    operation=op,
-                    success=True,
-                    data={"found": False, "namespace": request.namespace, "key": request.key}
-                ).model_dump_json(indent=2, exclude_none=True)
-
-        # SEARCH operation
-        elif op == "search":
-            if not request.namespace:
-                raise ValueError("namespace is required for search operation")
-            if not request.query:
-                raise ValueError("query is required for search operation")
-
-            _validate_namespace(request.namespace)
-            ns_tuple = tuple(request.namespace)
-            results = await memory_store_instance.search(ns_tuple, request.query, request.limit)
-            logger.info(f"Memory search '{request.query}' in {'/'.join(request.namespace)}: {len(results)} results")
-
-            return ManageMemoryResponse(
-                operation=op,
-                success=True,
-                data={
-                    "query": request.query,
-                    "namespace": request.namespace,
-                    "count": len(results),
-                    "results": [
-                        {
-                            "key": r.memory.key,
-                            "value": r.memory.value,
-                            "score": r.score,
-                            "match_context": r.match_context,
-                            "timestamp": r.memory.timestamp.isoformat(),
-                            "metadata": r.memory.metadata,
-                            "namespace": list(r.memory.namespace)
-                        }
-                        for r in results
-                    ]
-                }
-            ).model_dump_json(indent=2, exclude_none=True)
-
-        # LIST_KEYS operation
-        elif op == "list_keys":
-            if not request.namespace:
-                raise ValueError("namespace is required for list_keys operation")
-
-            _validate_namespace(request.namespace)
-            ns_tuple = tuple(request.namespace)
-            keys = await memory_store_instance.list_keys(ns_tuple)
-            logger.info(f"Listed {len(keys)} keys in namespace {'/'.join(request.namespace)}")
-
-            return ManageMemoryResponse(
-                operation=op,
-                success=True,
-                data={"namespace": request.namespace, "count": len(keys), "keys": keys}
-            ).model_dump_json(indent=2, exclude_none=True)
-
-        # LIST_NAMESPACES operation
-        elif op == "list_namespaces":
-            if request.namespace:
-                _validate_namespace(request.namespace)
-            prefix_tuple = tuple(request.namespace) if request.namespace else None
-            namespaces = await memory_store_instance.list_namespaces(prefix_tuple)
-            logger.info(f"Listed {len(namespaces)} namespaces")
-
-            return ManageMemoryResponse(
-                operation=op,
-                success=True,
-                data={
-                    "prefix": request.namespace,
-                    "count": len(namespaces),
-                    "namespaces": [list(ns) for ns in namespaces]
-                }
-            ).model_dump_json(indent=2, exclude_none=True)
-
-        # DELETE operation
-        elif op == "delete":
-            if not request.namespace:
-                raise ValueError("namespace is required for delete operation")
-            if not request.key:
-                raise ValueError("key is required for delete operation")
-
-            _validate_namespace(request.namespace)
-            _validate_key(request.key)
-            ns_tuple = tuple(request.namespace)
-            deleted = await memory_store_instance.delete(ns_tuple, request.key)
-
-            if deleted:
-                logger.info(f"Deleted memory: {'/'.join(request.namespace)}/{request.key}")
-            else:
-                logger.info(f"Memory not found for deletion: {'/'.join(request.namespace)}/{request.key}")
-
-            return ManageMemoryResponse(
-                operation=op,
-                success=True,
-                data={
-                    "deleted": deleted,
-                    "namespace": request.namespace,
-                    "key": request.key,
-                    "message": None if deleted else "Memory not found"
-                }
-            ).model_dump_json(indent=2, exclude_none=True)
-
-        # CLEAR operation
-        elif op == "clear":
-            if not request.namespace:
-                raise ValueError("namespace is required for clear operation")
-
-            _validate_namespace(request.namespace)
-
-            if not request.confirm:
-                return ManageMemoryResponse(
-                    operation=op,
-                    success=False,
-                    error="Confirmation required. Set confirm=True to clear namespace. This permanently deletes all memories.",
-                    data={"namespace": request.namespace}
-                ).model_dump_json(indent=2, exclude_none=True)
-
-            ns_tuple = tuple(request.namespace)
-            count = await memory_store_instance.clear_namespace(ns_tuple)
-            logger.info(f"Cleared namespace {'/'.join(request.namespace)}: {count} memories deleted")
-
-            return ManageMemoryResponse(
-                operation=op,
-                success=True,
-                data={"cleared": True, "namespace": request.namespace, "deleted_count": count}
-            ).model_dump_json(indent=2, exclude_none=True)
-
-        # STATS operation
-        elif op == "stats":
-            stats = await memory_store_instance.get_stats()
-            logger.info("Retrieved memory store stats")
-
-            return ManageMemoryResponse(
-                operation=op,
-                success=True,
-                data=stats
-            ).model_dump_json(indent=2, exclude_none=True)
-
-        else:
-            return ManageMemoryResponse(
-                operation=op,
-                success=False,
-                error=f"Unknown operation: {op}"
-            ).model_dump_json(indent=2, exclude_none=True)
-
-    except Exception as e:
-        logger.error(f"Error in manage_memory ({request.operation}): {e}")
-        return ManageMemoryResponse(
-            operation=request.operation,
-            success=False,
-            error=str(e)
-        ).model_dump_json(indent=2, exclude_none=True)
+    return await _dispatcher.dispatch(ctx=ctx, op=op, definer=definer, **params)
 
 
 def register(mcp):
-    """Register memory store tools with the FastMCP instance."""
-    mcp.tool()(manage_memory)
+    """Register the memory dispatcher tool.
+
+    Named ``memory`` to coexist with the legacy ``manage_memory`` tool
+    during the SP2 coexistence period. Final cutover (renaming to
+    ``memory``) happens at the end of SP2.
+    """
+    mcp.tool(name="memory")(memory)

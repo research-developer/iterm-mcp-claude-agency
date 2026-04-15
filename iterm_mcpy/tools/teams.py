@@ -1,6 +1,6 @@
-"""SP2 method-semantic `teams_v2` tool — Task 6.
+"""SP2 method-semantic `teams` tool — Task 6.
 
-Third SP2 collection tool (after sessions_v2 + agents_v2). Replaces the
+Third SP2 collection tool (after sessions + agents). Replaces the
 legacy ``manage_teams`` tool's 5 operations:
 
     - create         -> POST + CREATE  /teams
@@ -9,7 +9,7 @@ legacy ``manage_teams`` tool's 5 operations:
     - assign_agent   -> POST + CREATE   /teams/{name}/agents
     - remove_agent   -> DELETE          /teams/{name}/agents
 
-Registered under the provisional name ``teams_v2`` to coexist with the
+Registered under the provisional name ``teams`` to coexist with the
 legacy ``manage_teams`` tool; the cutover (rename to ``teams`` and
 unregister the legacy tool) happens at the end of SP2.
 """
@@ -97,7 +97,7 @@ class TeamsDispatcher(MethodDispatcher):
                     team_info["color_hue"] = round(team_profile.color.hue, 1)
             result.append(team_info)
 
-        logger.info(f"teams_v2 GET: listed {len(result)} teams")
+        logger.info(f"teams GET: listed {len(result)} teams")
         return {"teams": result, "count": len(result)}
 
     # ------------------------------- POST -------------------------------- #
@@ -161,7 +161,7 @@ class TeamsDispatcher(MethodDispatcher):
                 "action_required": True,
             }
             logger.info(
-                f"teams_v2 CREATE: service hook prompting for team "
+                f"teams CREATE: service hook prompting for team "
                 f"'{team_name}': {hook_result.message}"
             )
 
@@ -188,7 +188,7 @@ class TeamsDispatcher(MethodDispatcher):
         profile_manager.save_profiles()
 
         logger.info(
-            f"teams_v2 CREATE: created team '{team.name}' with profile "
+            f"teams CREATE: created team '{team.name}' with profile "
             f"color hue={team_profile.color.hue:.1f}"
         )
 
@@ -220,7 +220,7 @@ class TeamsDispatcher(MethodDispatcher):
             )
 
         logger.info(
-            f"teams_v2 CREATE agents: added agent '{agent_name}' to team "
+            f"teams CREATE agents: added agent '{agent_name}' to team "
             f"'{team_name}'"
         )
         return {"team_name": team_name, "agent_name": agent_name, "assigned": True}
@@ -262,15 +262,15 @@ class TeamsDispatcher(MethodDispatcher):
             if profile_removed:
                 profile_manager.save_profiles()
                 logger.info(
-                    f"teams_v2 DELETE: removed team '{team_name}' and its profile"
+                    f"teams DELETE: removed team '{team_name}' and its profile"
                 )
             else:
                 logger.info(
-                    f"teams_v2 DELETE: removed team '{team_name}' (no profile to remove)"
+                    f"teams DELETE: removed team '{team_name}' (no profile to remove)"
                 )
         else:
             logger.info(
-                f"teams_v2 DELETE: removed team '{team_name}' (no profile manager)"
+                f"teams DELETE: removed team '{team_name}' (no profile manager)"
             )
 
         return {"team_name": team_name, "profile_removed": profile_removed}
@@ -294,7 +294,7 @@ class TeamsDispatcher(MethodDispatcher):
             )
 
         logger.info(
-            f"teams_v2 DELETE agents: removed agent '{agent_name}' from "
+            f"teams DELETE agents: removed agent '{agent_name}' from "
             f"team '{team_name}'"
         )
         return {"team_name": team_name, "agent_name": agent_name, "removed": True}
@@ -303,7 +303,7 @@ class TeamsDispatcher(MethodDispatcher):
 _dispatcher = TeamsDispatcher()
 
 
-async def teams_v2(
+async def teams(
     ctx: Context,
     op: str = "GET",
     definer: Optional[str] = None,
@@ -354,10 +354,10 @@ async def teams_v2(
 
 
 def register(mcp):
-    """Register the teams_v2 dispatcher tool.
+    """Register the teams dispatcher tool.
 
-    Named ``teams_v2`` to coexist with the legacy ``manage_teams`` tool
+    Named ``teams`` to coexist with the legacy ``manage_teams`` tool
     during the SP2 coexistence period. Final cutover (renaming to
     ``teams``) happens at the end of SP2.
     """
-    mcp.tool(name="teams_v2")(teams_v2)
+    mcp.tool(name="teams")(teams)
