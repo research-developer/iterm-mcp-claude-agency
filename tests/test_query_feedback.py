@@ -19,14 +19,13 @@ This regression test pins both behaviours so the bug cannot silently return:
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 # Add parent directory to path for imports (matches sibling test conventions).
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -69,9 +68,12 @@ def _make_ctx(fake_registry: MagicMock) -> MagicMock:
     return ctx
 
 
-@pytest.mark.asyncio
-async def test_query_feedback_calls_registry_synchronously_with_agent_name():
-    """query_feedback must call .query() synchronously and pass agent_name=."""
+def test_query_feedback_calls_registry_synchronously_with_agent_name():
+    """query_feedback must call .query() synchronously and pass agent_name=.
+
+    Driven via ``asyncio.run`` rather than pytest-asyncio so the test runs in
+    the project's pytest config without an extra plugin.
+    """
     entry = _make_entry()
 
     # IMPORTANT: a regular MagicMock — *not* AsyncMock. If the production code
@@ -82,11 +84,13 @@ async def test_query_feedback_calls_registry_synchronously_with_agent_name():
 
     ctx = _make_ctx(fake_registry)
 
-    result = await query_feedback(
-        ctx,
-        status="pending",
-        agent_name="agent-x",
-        limit=5,
+    result = asyncio.run(
+        query_feedback(
+            ctx,
+            status="pending",
+            agent_name="agent-x",
+            limit=5,
+        )
     )
 
     # 1. Result is parseable JSON with exactly one entry.
