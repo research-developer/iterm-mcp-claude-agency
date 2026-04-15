@@ -48,6 +48,11 @@ class Team(BaseModel):
     parent_team: Optional[str] = Field(default=None, description="Parent team for cascading")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    # SP2: fields returned by HEAD (compact projection).
+    # Name + description gives callers enough to distinguish teams;
+    # parent_team and created_at are details left to GET.
+    HEAD_FIELDS: ClassVar[set[str]] = {"name", "description"}
+
 
 class MessageRecord(BaseModel):
     """Tracks sent messages for deduplication."""
