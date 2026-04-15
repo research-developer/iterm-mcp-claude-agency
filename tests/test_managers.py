@@ -1,10 +1,10 @@
-"""Tests for managers_v2 dispatcher (SP2 Task 7)."""
+"""Tests for managers dispatcher (SP2 Task 7)."""
 import asyncio
 import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from iterm_mcpy.tools.managers_v2 import ManagersDispatcher, managers_v2
+from iterm_mcpy.tools.managers import ManagersDispatcher, managers
 
 
 def _make_ctx(
@@ -70,7 +70,7 @@ def _fake_manager(
 
 class TestOptions(unittest.TestCase):
     def test_options_returns_schema(self):
-        parsed = json.loads(asyncio.run(managers_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(managers(ctx=_make_ctx(), op="OPTIONS")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["collection"], "managers")
@@ -81,19 +81,19 @@ class TestOptions(unittest.TestCase):
         self.assertIn("workers", parsed["data"]["sub_resources"])
 
     def test_options_lists_post_definers(self):
-        parsed = json.loads(asyncio.run(managers_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(managers(ctx=_make_ctx(), op="OPTIONS")))
         post = parsed["data"]["methods"]["POST"]
         self.assertIn("CREATE", post["definers"])
 
     def test_schema_verb_works(self):
-        parsed = json.loads(asyncio.run(managers_v2(ctx=_make_ctx(), op="schema")))
+        parsed = json.loads(asyncio.run(managers(ctx=_make_ctx(), op="schema")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
 
 
 class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
-        parsed = json.loads(asyncio.run(managers_v2(ctx=_make_ctx(), op="frobnicate")))
+        parsed = json.loads(asyncio.run(managers(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"])
 
@@ -102,7 +102,7 @@ class TestWrongDefiner(unittest.TestCase):
     def test_post_replace_rejected(self):
         # REPLACE is in the PUT family, not POST.
         parsed = json.loads(asyncio.run(
-            managers_v2(ctx=_make_ctx(), op="POST", definer="REPLACE")
+            managers(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not in POST family", parsed["error"])
@@ -129,26 +129,26 @@ class TestList(unittest.TestCase):
             ),
         ]
 
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="list",
         )))
         self.assertEqual(parsed["method"], "GET")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["count"], 2)
-        managers = parsed["data"]["managers"]
-        self.assertEqual(managers[0]["name"], "m1")
-        self.assertEqual(managers[0]["workers"], ["w1", "w2"])
-        self.assertEqual(managers[0]["worker_count"], 2)
-        self.assertEqual(managers[0]["delegation_strategy"], "role_based")
-        self.assertEqual(managers[1]["name"], "m2")
-        self.assertEqual(managers[1]["worker_count"], 0)
-        self.assertEqual(managers[1]["delegation_strategy"], "round_robin")
+        manager_list = parsed["data"]["managers"]
+        self.assertEqual(manager_list[0]["name"], "m1")
+        self.assertEqual(manager_list[0]["workers"], ["w1", "w2"])
+        self.assertEqual(manager_list[0]["worker_count"], 2)
+        self.assertEqual(manager_list[0]["delegation_strategy"], "role_based")
+        self.assertEqual(manager_list[1]["name"], "m2")
+        self.assertEqual(manager_list[1]["worker_count"], 0)
+        self.assertEqual(manager_list[1]["delegation_strategy"], "round_robin")
 
     def test_list_empty(self):
         registry = MagicMock()
         registry.list_managers.return_value = []
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="list",
         )))
@@ -159,7 +159,7 @@ class TestList(unittest.TestCase):
     def test_list_via_get_verb(self):
         registry = MagicMock()
         registry.list_managers.return_value = []
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="GET",
         )))
@@ -174,7 +174,7 @@ class TestHead(unittest.TestCase):
         # HEAD envelope still gets ok=true with the dict data.
         registry = MagicMock()
         registry.list_managers.return_value = []
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="HEAD",
         )))
@@ -198,7 +198,7 @@ class TestGetInfo(unittest.TestCase):
             metadata={"team": "backend"},
         )
 
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="GET",
             manager_name="m1",
@@ -217,7 +217,7 @@ class TestGetInfo(unittest.TestCase):
     def test_get_info_not_found_returns_err(self):
         registry = MagicMock()
         registry.get_manager.return_value = None
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="GET",
             manager_name="missing",
@@ -230,7 +230,7 @@ class TestGetInfo(unittest.TestCase):
         # without manager_name it lists.
         registry = MagicMock()
         registry.get_manager.return_value = _fake_manager(name="m1")
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="get",
             manager_name="m1",
@@ -257,7 +257,7 @@ class TestCreateManager(unittest.TestCase):
 
         # Patch _setup_manager_callbacks to isolate from real callback wiring.
         with patch("iterm_mcpy.tools._callbacks._setup_manager_callbacks") as mock_setup:
-            parsed = json.loads(asyncio.run(managers_v2(
+            parsed = json.loads(asyncio.run(managers(
                 ctx=_make_ctx(manager_registry=registry),
                 op="create",
                 manager_name="m1",
@@ -281,7 +281,7 @@ class TestCreateManager(unittest.TestCase):
             name="m1", workers=[], strategy_value="role_based"
         )
         with patch("iterm_mcpy.tools._callbacks._setup_manager_callbacks"):
-            parsed = json.loads(asyncio.run(managers_v2(
+            parsed = json.loads(asyncio.run(managers(
                 ctx=_make_ctx(manager_registry=registry),
                 op="POST",
                 definer="CREATE",
@@ -291,7 +291,7 @@ class TestCreateManager(unittest.TestCase):
         self.assertEqual(parsed["definer"], "CREATE")
 
     def test_create_manager_missing_name_returns_err(self):
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(),
             op="create",
         )))
@@ -306,7 +306,7 @@ class TestCreateManager(unittest.TestCase):
             strategy_value="round_robin",
         )
         with patch("iterm_mcpy.tools._callbacks._setup_manager_callbacks"):
-            parsed = json.loads(asyncio.run(managers_v2(
+            parsed = json.loads(asyncio.run(managers(
                 ctx=_make_ctx(manager_registry=registry),
                 op="create",
                 manager_name="m1",
@@ -342,7 +342,7 @@ class TestAddWorker(unittest.TestCase):
         manager_mock = _fake_manager(name="m1")
         registry.get_manager.return_value = manager_mock
 
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="POST", definer="CREATE", target="workers",
             manager_name="m1", worker_name="w1",
@@ -360,7 +360,7 @@ class TestAddWorker(unittest.TestCase):
         manager_mock = _fake_manager(name="m1")
         registry.get_manager.return_value = manager_mock
 
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="create", target="workers",
             manager_name="m1", worker_name="w1",
@@ -374,7 +374,7 @@ class TestAddWorker(unittest.TestCase):
     def test_add_worker_manager_not_found_returns_err(self):
         registry = MagicMock()
         registry.get_manager.return_value = None
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="create", target="workers",
             manager_name="missing", worker_name="w1",
@@ -383,7 +383,7 @@ class TestAddWorker(unittest.TestCase):
         self.assertIn("missing", parsed["error"])
 
     def test_add_worker_missing_manager_name_returns_err(self):
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(),
             op="create", target="workers", worker_name="w1",
         )))
@@ -391,7 +391,7 @@ class TestAddWorker(unittest.TestCase):
         self.assertIn("manager_name", parsed["error"].lower())
 
     def test_add_worker_missing_worker_name_returns_err(self):
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(),
             op="create", target="workers", manager_name="m1",
         )))
@@ -409,7 +409,7 @@ class TestRemoveManager(unittest.TestCase):
         registry = MagicMock()
         registry.remove_manager.return_value = True
 
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="delete",
             manager_name="m1",
@@ -423,7 +423,7 @@ class TestRemoveManager(unittest.TestCase):
     def test_remove_manager_not_found_returns_err(self):
         registry = MagicMock()
         registry.remove_manager.return_value = False
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="delete",
             manager_name="missing",
@@ -432,7 +432,7 @@ class TestRemoveManager(unittest.TestCase):
         self.assertIn("missing", parsed["error"])
 
     def test_remove_manager_missing_name_returns_err(self):
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(),
             op="delete",
         )))
@@ -442,7 +442,7 @@ class TestRemoveManager(unittest.TestCase):
     def test_remove_manager_via_delete_method(self):
         registry = MagicMock()
         registry.remove_manager.return_value = True
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="DELETE",
             manager_name="m1",
@@ -462,7 +462,7 @@ class TestRemoveWorker(unittest.TestCase):
         manager_mock.remove_worker.return_value = True
         registry.get_manager.return_value = manager_mock
 
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="delete", target="workers",
             manager_name="m1", worker_name="w1",
@@ -480,7 +480,7 @@ class TestRemoveWorker(unittest.TestCase):
         manager_mock.remove_worker.return_value = False
         registry.get_manager.return_value = manager_mock
 
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="delete", target="workers",
             manager_name="m1", worker_name="missing",
@@ -491,7 +491,7 @@ class TestRemoveWorker(unittest.TestCase):
     def test_remove_worker_manager_not_found_returns_err(self):
         registry = MagicMock()
         registry.get_manager.return_value = None
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(manager_registry=registry),
             op="delete", target="workers",
             manager_name="missing", worker_name="w1",
@@ -500,7 +500,7 @@ class TestRemoveWorker(unittest.TestCase):
         self.assertIn("missing", parsed["error"])
 
     def test_remove_worker_missing_manager_returns_err(self):
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(),
             op="DELETE", target="workers", worker_name="w1",
         )))
@@ -508,7 +508,7 @@ class TestRemoveWorker(unittest.TestCase):
         self.assertIn("manager_name", parsed["error"].lower())
 
     def test_remove_worker_missing_worker_returns_err(self):
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(),
             op="DELETE", target="workers", manager_name="m1",
         )))
@@ -524,13 +524,13 @@ class TestRemoveWorker(unittest.TestCase):
 class TestUnsupportedCombinations(unittest.TestCase):
     def test_post_send_not_implemented(self):
         parsed = json.loads(asyncio.run(
-            managers_v2(ctx=_make_ctx(), op="POST", definer="SEND")
+            managers(ctx=_make_ctx(), op="POST", definer="SEND")
         ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not", parsed["error"].lower())
 
     def test_delete_unknown_target_not_implemented(self):
-        parsed = json.loads(asyncio.run(managers_v2(
+        parsed = json.loads(asyncio.run(managers(
             ctx=_make_ctx(),
             op="DELETE", target="bogus",
         )))

@@ -1,11 +1,11 @@
-"""Tests for memory_v2 dispatcher (SP2 Task 9)."""
+"""Tests for memory dispatcher (SP2 Task 9)."""
 import asyncio
 import json
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
-from iterm_mcpy.tools.memory_v2 import MemoryDispatcher, memory_v2
+from iterm_mcpy.tools.memory import MemoryDispatcher, memory
 
 
 def _make_ctx(memory_store=None, logger=None, **extra):
@@ -84,7 +84,7 @@ def _fake_search_result(
 
 class TestOptions(unittest.TestCase):
     def test_options_returns_schema(self):
-        parsed = json.loads(asyncio.run(memory_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(memory(ctx=_make_ctx(), op="OPTIONS")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["collection"], "memory")
@@ -95,19 +95,19 @@ class TestOptions(unittest.TestCase):
             self.assertIn(sub, parsed["data"]["sub_resources"])
 
     def test_options_lists_post_definers(self):
-        parsed = json.loads(asyncio.run(memory_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(memory(ctx=_make_ctx(), op="OPTIONS")))
         post = parsed["data"]["methods"]["POST"]
         self.assertIn("CREATE", post["definers"])
 
     def test_schema_verb_works(self):
-        parsed = json.loads(asyncio.run(memory_v2(ctx=_make_ctx(), op="schema")))
+        parsed = json.loads(asyncio.run(memory(ctx=_make_ctx(), op="schema")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
 
 
 class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
-        parsed = json.loads(asyncio.run(memory_v2(ctx=_make_ctx(), op="frobnicate")))
+        parsed = json.loads(asyncio.run(memory(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"])
 
@@ -116,7 +116,7 @@ class TestWrongDefiner(unittest.TestCase):
     def test_post_replace_rejected(self):
         # REPLACE belongs to the PUT family, not POST.
         parsed = json.loads(asyncio.run(
-            memory_v2(ctx=_make_ctx(), op="POST", definer="REPLACE")
+            memory(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not in POST family", parsed["error"])
@@ -132,7 +132,7 @@ class TestStore(unittest.TestCase):
         store = MagicMock()
         store.store = AsyncMock(return_value=None)
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="store",
             namespace=["proj", "agent"],
@@ -157,7 +157,7 @@ class TestStore(unittest.TestCase):
         store = MagicMock()
         store.store = AsyncMock(return_value=None)
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="POST", definer="CREATE",
             namespace=["ns"], key="k", value="v",
@@ -167,7 +167,7 @@ class TestStore(unittest.TestCase):
         self.assertEqual(parsed["data"]["metadata"], {})
 
     def test_store_missing_namespace_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="store",
             key="k", value="v",
@@ -176,7 +176,7 @@ class TestStore(unittest.TestCase):
         self.assertIn("namespace", parsed["error"].lower())
 
     def test_store_missing_key_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="store",
             namespace=["ns"], value="v",
@@ -185,7 +185,7 @@ class TestStore(unittest.TestCase):
         self.assertIn("key", parsed["error"].lower())
 
     def test_store_missing_value_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="store",
             namespace=["ns"], key="k",
@@ -194,7 +194,7 @@ class TestStore(unittest.TestCase):
         self.assertIn("value", parsed["error"].lower())
 
     def test_store_invalid_namespace_char_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="store",
             namespace=["bad ns"], key="k", value="v",
@@ -203,7 +203,7 @@ class TestStore(unittest.TestCase):
         self.assertIn("invalid", parsed["error"].lower())
 
     def test_store_invalid_key_char_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="store",
             namespace=["ns"], key="bad key!", value="v",
@@ -227,7 +227,7 @@ class TestRetrieve(unittest.TestCase):
             metadata={"tag": "test"},
         ))
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="retrieve",
             namespace=["proj", "agent"], key="mykey",
@@ -245,7 +245,7 @@ class TestRetrieve(unittest.TestCase):
         store = MagicMock()
         store.retrieve = AsyncMock(return_value=None)
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="GET",
             namespace=["proj"], key="missing",
@@ -256,7 +256,7 @@ class TestRetrieve(unittest.TestCase):
         self.assertEqual(parsed["data"]["key"], "missing")
 
     def test_retrieve_missing_namespace_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="retrieve",
             key="k",
@@ -265,7 +265,7 @@ class TestRetrieve(unittest.TestCase):
         self.assertIn("namespace", parsed["error"].lower())
 
     def test_retrieve_missing_key_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="retrieve",
             namespace=["ns"],
@@ -281,7 +281,7 @@ class TestHead(unittest.TestCase):
         store = MagicMock()
         store.retrieve = AsyncMock(return_value=None)
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="HEAD",
             namespace=["ns"], key="k",
@@ -311,7 +311,7 @@ class TestSearch(unittest.TestCase):
             ),
         ])
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="GET", target="search",
             namespace=["proj", "agent"], query="hello", limit=5,
@@ -330,7 +330,7 @@ class TestSearch(unittest.TestCase):
         store = MagicMock()
         store.search = AsyncMock(return_value=[])
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="search", target="search",
             namespace=["proj"], query="foo",
@@ -341,7 +341,7 @@ class TestSearch(unittest.TestCase):
         store.search.assert_awaited_once_with(("proj",), "foo", 10)
 
     def test_search_missing_namespace_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="GET", target="search",
             query="foo",
@@ -350,7 +350,7 @@ class TestSearch(unittest.TestCase):
         self.assertIn("namespace", parsed["error"].lower())
 
     def test_search_missing_query_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="GET", target="search",
             namespace=["ns"],
@@ -369,7 +369,7 @@ class TestListKeys(unittest.TestCase):
         store = MagicMock()
         store.list_keys = AsyncMock(return_value=["a", "b", "c"])
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="GET", target="keys",
             namespace=["proj"],
@@ -384,7 +384,7 @@ class TestListKeys(unittest.TestCase):
         store = MagicMock()
         store.list_keys = AsyncMock(return_value=[])
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="list", target="keys",
             namespace=["empty"],
@@ -393,7 +393,7 @@ class TestListKeys(unittest.TestCase):
         self.assertEqual(parsed["data"]["count"], 0)
 
     def test_list_keys_missing_namespace_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="GET", target="keys",
         )))
@@ -414,7 +414,7 @@ class TestListNamespaces(unittest.TestCase):
             ("other",),
         ])
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="GET", target="namespaces",
         )))
@@ -429,7 +429,7 @@ class TestListNamespaces(unittest.TestCase):
         store = MagicMock()
         store.list_namespaces = AsyncMock(return_value=[("proj", "agent")])
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="GET", target="namespaces",
             namespace=["proj"],
@@ -454,7 +454,7 @@ class TestStats(unittest.TestCase):
             "db_path": "/tmp/memories.db",
         })
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="GET", target="stats",
         )))
@@ -474,7 +474,7 @@ class TestDeleteKey(unittest.TestCase):
         store = MagicMock()
         store.delete = AsyncMock(return_value=True)
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="delete",
             namespace=["proj"], key="mykey",
@@ -491,7 +491,7 @@ class TestDeleteKey(unittest.TestCase):
         store = MagicMock()
         store.delete = AsyncMock(return_value=False)
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="DELETE",
             namespace=["proj"], key="missing",
@@ -501,7 +501,7 @@ class TestDeleteKey(unittest.TestCase):
         self.assertEqual(parsed["data"]["message"], "Memory not found")
 
     def test_delete_missing_namespace_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="delete",
             key="mykey",
@@ -510,7 +510,7 @@ class TestDeleteKey(unittest.TestCase):
         self.assertIn("namespace", parsed["error"].lower())
 
     def test_delete_missing_key_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="delete",
             namespace=["proj"],
@@ -529,7 +529,7 @@ class TestClearNamespace(unittest.TestCase):
         store = MagicMock()
         store.clear_namespace = AsyncMock(return_value=7)
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="DELETE", target="namespace",
             namespace=["proj", "old"], confirm=True,
@@ -544,7 +544,7 @@ class TestClearNamespace(unittest.TestCase):
         store = MagicMock()
         store.clear_namespace = AsyncMock(return_value=3)
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="clear", target="namespace",
             namespace=["proj"], confirm=True,
@@ -556,7 +556,7 @@ class TestClearNamespace(unittest.TestCase):
         store = MagicMock()
         store.clear_namespace = AsyncMock(return_value=0)
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="DELETE", target="namespace",
             namespace=["proj"],
@@ -570,7 +570,7 @@ class TestClearNamespace(unittest.TestCase):
         store = MagicMock()
         store.clear_namespace = AsyncMock(return_value=0)
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="DELETE", target="namespace",
             namespace=["proj"], confirm=False,
@@ -580,7 +580,7 @@ class TestClearNamespace(unittest.TestCase):
         store.clear_namespace.assert_not_awaited()
 
     def test_clear_missing_namespace_returns_err(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="DELETE", target="namespace",
             confirm=True,
@@ -596,7 +596,7 @@ class TestClearNamespace(unittest.TestCase):
 
 class TestUnsupportedCombinations(unittest.TestCase):
     def test_post_invoke_not_implemented(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="POST", definer="INVOKE",
         )))
@@ -604,7 +604,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
         self.assertIn("not", parsed["error"].lower())
 
     def test_post_send_not_implemented(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="POST", definer="SEND",
         )))
@@ -612,7 +612,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
         self.assertIn("not", parsed["error"].lower())
 
     def test_put_not_implemented(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="PUT", definer="REPLACE",
         )))
@@ -620,7 +620,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
         self.assertIn("not implemented", parsed["error"].lower())
 
     def test_patch_not_implemented(self):
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(),
             op="PATCH", definer="MODIFY",
         )))
@@ -640,7 +640,7 @@ class TestLegacyOpInterop(unittest.TestCase):
         store = MagicMock()
         store.list_keys = AsyncMock(return_value=["a", "b"])
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="list_keys",
             namespace=["proj"],
@@ -653,7 +653,7 @@ class TestLegacyOpInterop(unittest.TestCase):
         store = MagicMock()
         store.list_namespaces = AsyncMock(return_value=[("proj",)])
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="list_namespaces",
         )))
@@ -665,7 +665,7 @@ class TestLegacyOpInterop(unittest.TestCase):
         store = MagicMock()
         store.get_stats = AsyncMock(return_value={"total_memories": 0})
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="stats",
         )))
@@ -679,7 +679,7 @@ class TestLegacyOpInterop(unittest.TestCase):
         store = MagicMock()
         store.store = AsyncMock(return_value=None)
 
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="store",
             namespace=["ns"], key="k", value="v",
@@ -693,7 +693,7 @@ class TestLegacyOpInterop(unittest.TestCase):
         store.clear_namespace = AsyncMock(return_value=0)
 
         # No confirm -> err, no side effect.
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="clear",
             namespace=["proj"],
@@ -702,7 +702,7 @@ class TestLegacyOpInterop(unittest.TestCase):
         store.clear_namespace.assert_not_awaited()
 
         # With confirm -> cleared.
-        parsed = json.loads(asyncio.run(memory_v2(
+        parsed = json.loads(asyncio.run(memory(
             ctx=_make_ctx(memory_store=store),
             op="clear",
             namespace=["proj"], confirm=True,

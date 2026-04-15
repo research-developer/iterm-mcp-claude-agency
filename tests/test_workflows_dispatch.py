@@ -1,6 +1,6 @@
-"""Tests for workflows_v2 dispatcher (SP2 Task 12).
+"""Tests for workflows dispatcher (SP2 Task 12).
 
-Covers the three legacy tools that workflows_v2 replaces:
+Covers the three legacy tools that workflows replaces:
     - list_workflow_events       -> GET  target=None / target='events'
     - get_workflow_event_history -> GET  target='history'
     - trigger_workflow_event     -> POST definer='TRIGGER'
@@ -14,7 +14,7 @@ import unittest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from iterm_mcpy.tools.workflows_v2 import WorkflowsDispatcher, workflows_v2
+from iterm_mcpy.tools.workflows import WorkflowsDispatcher, workflows
 
 
 def _make_ctx(event_bus=None, flow_manager=None, logger=None, **extra):
@@ -32,7 +32,7 @@ def _make_ctx(event_bus=None, flow_manager=None, logger=None, **extra):
         eb.get_history = AsyncMock(return_value=[])
         eb.trigger = AsyncMock(return_value=None)
         # Private registry — the legacy list tool reads it directly, so
-        # workflows_v2 does too.
+        # workflows does too.
         registry = MagicMock()
         registry.get_listeners = AsyncMock(return_value=[])
         registry.get_router = AsyncMock(return_value=None)
@@ -98,7 +98,7 @@ def _make_event_result(
 
 class TestOptions(unittest.TestCase):
     def test_options_returns_schema(self):
-        parsed = json.loads(asyncio.run(workflows_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(workflows(ctx=_make_ctx(), op="OPTIONS")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["collection"], "workflows")
@@ -115,7 +115,7 @@ class TestOptions(unittest.TestCase):
         self.assertIn("history", parsed["data"]["sub_resources"])
 
     def test_options_lists_post_definers(self):
-        parsed = json.loads(asyncio.run(workflows_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(workflows(ctx=_make_ctx(), op="OPTIONS")))
         post = parsed["data"]["methods"]["POST"]
         self.assertIn("TRIGGER", post["definers"])
         # CREATE / SEND / INVOKE shouldn't be advertised — workflows only
@@ -125,7 +125,7 @@ class TestOptions(unittest.TestCase):
         self.assertNotIn("INVOKE", post["definers"])
 
     def test_schema_verb_works(self):
-        parsed = json.loads(asyncio.run(workflows_v2(ctx=_make_ctx(), op="schema")))
+        parsed = json.loads(asyncio.run(workflows(ctx=_make_ctx(), op="schema")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
 
@@ -153,7 +153,7 @@ class TestListEvents(unittest.TestCase):
         fm = MagicMock()
         fm.list_flows.return_value = ["MyFlow"]
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb, flow_manager=fm),
             op="list",
         )))
@@ -172,7 +172,7 @@ class TestListEvents(unittest.TestCase):
         self.assertEqual(parsed["data"]["flows_registered"], ["MyFlow"])
 
     def test_list_events_empty(self):
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(),
             op="list",
         )))
@@ -190,7 +190,7 @@ class TestListEvents(unittest.TestCase):
         registry.get_start_handler = AsyncMock(return_value=MagicMock())
         eb._registry = registry
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
             op="GET", target="events",
         )))
@@ -211,7 +211,7 @@ class TestListEvents(unittest.TestCase):
         eb._registry = registry
         ctx.request_context.lifespan_context = {"event_bus": eb, "logger": MagicMock()}
 
-        parsed = json.loads(asyncio.run(workflows_v2(ctx=ctx, op="list")))
+        parsed = json.loads(asyncio.run(workflows(ctx=ctx, op="list")))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["flows_registered"], [])
 
@@ -241,7 +241,7 @@ class TestHistory(unittest.TestCase):
             ),
         ])
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
             op="GET", target="history",
         )))
@@ -271,7 +271,7 @@ class TestHistory(unittest.TestCase):
             ),
         ])
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
             op="GET", target="history",
             event_name="specific_evt",
@@ -287,7 +287,7 @@ class TestHistory(unittest.TestCase):
         eb = MagicMock()
         eb.get_history = AsyncMock(return_value=[])
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
             op="GET", target="history",
             success_only=True, limit=50,
@@ -301,7 +301,7 @@ class TestHistory(unittest.TestCase):
         eb = MagicMock()
         eb.get_history = AsyncMock(return_value=[])
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
             op="GET", target="history",
             limit=5000,
@@ -321,7 +321,7 @@ class TestTrigger(unittest.TestCase):
         eb = MagicMock()
         eb.trigger = AsyncMock(return_value=None)
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
             op="trigger",
             event_name="my_event",
@@ -353,7 +353,7 @@ class TestTrigger(unittest.TestCase):
         eb = MagicMock()
         eb.trigger = AsyncMock(return_value=result)
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
             op="trigger",
             event_name="immediate_evt",
@@ -375,7 +375,7 @@ class TestTrigger(unittest.TestCase):
         eb = MagicMock()
         eb.trigger = AsyncMock(return_value=None)
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
             op="POST", definer="TRIGGER",
             event_name="my_event",
@@ -388,7 +388,7 @@ class TestTrigger(unittest.TestCase):
         eb = MagicMock()
         eb.trigger = AsyncMock(return_value=None)
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
             op="start",
             event_name="my_event",
@@ -399,7 +399,7 @@ class TestTrigger(unittest.TestCase):
         self.assertEqual(parsed["definer"], "TRIGGER")
 
     def test_trigger_missing_event_name_returns_err(self):
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(),
             op="trigger",
         )))
@@ -410,7 +410,7 @@ class TestTrigger(unittest.TestCase):
         eb = MagicMock()
         eb.trigger = AsyncMock(return_value=None)
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
             op="trigger",
             event_name="my_event",
@@ -433,7 +433,7 @@ class TestTrigger(unittest.TestCase):
         eb = MagicMock()
         eb.trigger = AsyncMock(return_value=result)
 
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(event_bus=eb),
             op="trigger",
             event_name="bad_evt",
@@ -454,7 +454,7 @@ class TestTrigger(unittest.TestCase):
 
 class TestHead(unittest.TestCase):
     def test_head_returns_compact_envelope(self):
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(),
             op="HEAD",
         )))
@@ -469,7 +469,7 @@ class TestHead(unittest.TestCase):
 
 class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(),
             op="frobnicate",
         )))
@@ -479,7 +479,7 @@ class TestUnknownOp(unittest.TestCase):
 
 class TestUnsupportedDefiners(unittest.TestCase):
     def test_post_create_not_implemented(self):
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(),
             op="POST", definer="CREATE",
         )))
@@ -487,7 +487,7 @@ class TestUnsupportedDefiners(unittest.TestCase):
         self.assertIn("not implemented", parsed["error"].lower())
 
     def test_post_send_not_implemented(self):
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(),
             op="POST", definer="SEND",
         )))
@@ -495,7 +495,7 @@ class TestUnsupportedDefiners(unittest.TestCase):
         self.assertIn("not implemented", parsed["error"].lower())
 
     def test_patch_not_implemented(self):
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(),
             op="PATCH", definer="MODIFY",
         )))
@@ -503,7 +503,7 @@ class TestUnsupportedDefiners(unittest.TestCase):
         self.assertIn("not implemented", parsed["error"].lower())
 
     def test_delete_not_implemented(self):
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(),
             op="DELETE",
         )))
@@ -512,7 +512,7 @@ class TestUnsupportedDefiners(unittest.TestCase):
 
     def test_wrong_family_definer_rejected(self):
         # REPLACE belongs to PUT, not POST.
-        parsed = json.loads(asyncio.run(workflows_v2(
+        parsed = json.loads(asyncio.run(workflows(
             ctx=_make_ctx(),
             op="POST", definer="REPLACE",
         )))

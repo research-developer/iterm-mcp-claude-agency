@@ -1,10 +1,10 @@
-"""Tests for teams_v2 dispatcher (SP2 Task 6)."""
+"""Tests for teams dispatcher (SP2 Task 6)."""
 import asyncio
 import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from iterm_mcpy.tools.teams_v2 import TeamsDispatcher, teams_v2
+from iterm_mcpy.tools.teams import TeamsDispatcher, teams
 
 
 def _make_ctx(
@@ -54,7 +54,7 @@ def _fake_hook_result(
 
 class TestOptions(unittest.TestCase):
     def test_options_returns_schema(self):
-        parsed = json.loads(asyncio.run(teams_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(teams(ctx=_make_ctx(), op="OPTIONS")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["collection"], "teams")
@@ -65,19 +65,19 @@ class TestOptions(unittest.TestCase):
         self.assertIn("agents", parsed["data"]["sub_resources"])
 
     def test_options_lists_post_definers(self):
-        parsed = json.loads(asyncio.run(teams_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(teams(ctx=_make_ctx(), op="OPTIONS")))
         post = parsed["data"]["methods"]["POST"]
         self.assertIn("CREATE", post["definers"])
 
     def test_schema_verb_works(self):
-        parsed = json.loads(asyncio.run(teams_v2(ctx=_make_ctx(), op="schema")))
+        parsed = json.loads(asyncio.run(teams(ctx=_make_ctx(), op="schema")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
 
 
 class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
-        parsed = json.loads(asyncio.run(teams_v2(ctx=_make_ctx(), op="frobnicate")))
+        parsed = json.loads(asyncio.run(teams(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"])
 
@@ -86,7 +86,7 @@ class TestWrongDefiner(unittest.TestCase):
     def test_post_replace_rejected(self):
         # REPLACE is in the PUT family, not POST.
         parsed = json.loads(asyncio.run(
-            teams_v2(ctx=_make_ctx(), op="POST", definer="REPLACE")
+            teams(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not in POST family", parsed["error"])
@@ -116,7 +116,7 @@ class TestList(unittest.TestCase):
         # No profile → skip profile fields.
         profile_manager.get_team_profile.return_value = None
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(
                 agent_registry=registry,
                 profile_manager=profile_manager,
@@ -126,13 +126,13 @@ class TestList(unittest.TestCase):
         self.assertEqual(parsed["method"], "GET")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["count"], 2)
-        teams = parsed["data"]["teams"]
-        self.assertEqual(teams[0]["name"], "backend")
-        self.assertEqual(teams[0]["description"], "Backend squad")
-        self.assertEqual(teams[0]["member_count"], 1)
-        self.assertEqual(teams[1]["name"], "infra")
-        self.assertEqual(teams[1]["parent_team"], "root")
-        self.assertEqual(teams[1]["member_count"], 0)
+        team_list = parsed["data"]["teams"]
+        self.assertEqual(team_list[0]["name"], "backend")
+        self.assertEqual(team_list[0]["description"], "Backend squad")
+        self.assertEqual(team_list[0]["member_count"], 1)
+        self.assertEqual(team_list[1]["name"], "infra")
+        self.assertEqual(team_list[1]["parent_team"], "root")
+        self.assertEqual(team_list[1]["member_count"], 0)
 
     def test_list_includes_profile_info_when_present(self):
         from core.agents import Team
@@ -149,7 +149,7 @@ class TestList(unittest.TestCase):
         profile_manager = MagicMock()
         profile_manager.get_team_profile.return_value = fake_profile
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(
                 agent_registry=registry,
                 profile_manager=profile_manager,
@@ -164,7 +164,7 @@ class TestList(unittest.TestCase):
     def test_list_empty(self):
         registry = MagicMock()
         registry.list_teams.return_value = []
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(agent_registry=registry),
             op="list",
         )))
@@ -180,7 +180,7 @@ class TestHead(unittest.TestCase):
         # HEAD envelope still gets ok=true and a compact summary.
         registry = MagicMock()
         registry.list_teams.return_value = []
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(agent_registry=registry),
             op="HEAD",
         )))
@@ -221,7 +221,7 @@ class TestCreateTeam(unittest.TestCase):
     def test_create_team_via_friendly_verb(self):
         registry, profile_manager, service_hook_manager = self._setup_ctx()
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(
                 agent_registry=registry,
                 profile_manager=profile_manager,
@@ -252,7 +252,7 @@ class TestCreateTeam(unittest.TestCase):
 
     def test_create_team_via_post_plus_definer(self):
         registry, profile_manager, service_hook_manager = self._setup_ctx()
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(
                 agent_registry=registry,
                 profile_manager=profile_manager,
@@ -266,7 +266,7 @@ class TestCreateTeam(unittest.TestCase):
         self.assertEqual(parsed["definer"], "CREATE")
 
     def test_create_team_missing_name_returns_err(self):
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(),
             op="create",
         )))
@@ -275,7 +275,7 @@ class TestCreateTeam(unittest.TestCase):
 
     def test_create_team_with_parent_and_repo_path(self):
         registry, profile_manager, service_hook_manager = self._setup_ctx()
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(
                 agent_registry=registry,
                 profile_manager=profile_manager,
@@ -308,7 +308,7 @@ class TestCreateTeam(unittest.TestCase):
             )
         )
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(
                 agent_registry=registry,
                 profile_manager=profile_manager,
@@ -351,7 +351,7 @@ class TestCreateTeam(unittest.TestCase):
             )
         )
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(
                 agent_registry=registry,
                 profile_manager=profile_manager,
@@ -378,7 +378,7 @@ class TestAssignAgent(unittest.TestCase):
         registry = MagicMock()
         registry.assign_to_team.return_value = True
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(agent_registry=registry),
             op="POST", definer="CREATE", target="agents",
             team_name="infra", agent_name="alice",
@@ -395,7 +395,7 @@ class TestAssignAgent(unittest.TestCase):
         registry = MagicMock()
         registry.assign_to_team.return_value = False
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(agent_registry=registry),
             op="create", target="agents",
             team_name="infra", agent_name="missing",
@@ -404,7 +404,7 @@ class TestAssignAgent(unittest.TestCase):
         self.assertIn("agent not found", parsed["error"].lower())
 
     def test_assign_agent_missing_team_name_returns_err(self):
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(),
             op="create", target="agents", agent_name="alice",
         )))
@@ -412,7 +412,7 @@ class TestAssignAgent(unittest.TestCase):
         self.assertIn("team_name", parsed["error"].lower())
 
     def test_assign_agent_missing_agent_name_returns_err(self):
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(),
             op="create", target="agents", team_name="infra",
         )))
@@ -432,7 +432,7 @@ class TestRemoveTeam(unittest.TestCase):
         profile_manager = MagicMock()
         profile_manager.remove_team_profile.return_value = True
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(
                 agent_registry=registry,
                 profile_manager=profile_manager,
@@ -454,7 +454,7 @@ class TestRemoveTeam(unittest.TestCase):
         profile_manager = MagicMock()
         profile_manager.remove_team_profile.return_value = False
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(
                 agent_registry=registry,
                 profile_manager=profile_manager,
@@ -470,7 +470,7 @@ class TestRemoveTeam(unittest.TestCase):
         registry = MagicMock()
         registry.remove_team.return_value = False
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(agent_registry=registry),
             op="delete",
             team_name="missing",
@@ -479,7 +479,7 @@ class TestRemoveTeam(unittest.TestCase):
         self.assertIn("missing", parsed["error"])
 
     def test_remove_team_missing_name_returns_err(self):
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(),
             op="delete",
         )))
@@ -497,7 +497,7 @@ class TestRemoveAgentFromTeam(unittest.TestCase):
         registry = MagicMock()
         registry.remove_from_team.return_value = True
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(agent_registry=registry),
             op="delete", target="agents",
             team_name="infra", agent_name="alice",
@@ -513,7 +513,7 @@ class TestRemoveAgentFromTeam(unittest.TestCase):
         registry = MagicMock()
         registry.remove_from_team.return_value = False
 
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(agent_registry=registry),
             op="delete", target="agents",
             team_name="infra", agent_name="missing",
@@ -522,7 +522,7 @@ class TestRemoveAgentFromTeam(unittest.TestCase):
         self.assertIn("not found", parsed["error"].lower())
 
     def test_remove_agent_missing_team_returns_err(self):
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(),
             op="DELETE", target="agents", agent_name="alice",
         )))
@@ -530,7 +530,7 @@ class TestRemoveAgentFromTeam(unittest.TestCase):
         self.assertIn("team_name", parsed["error"].lower())
 
     def test_remove_agent_missing_agent_returns_err(self):
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(),
             op="DELETE", target="agents", team_name="infra",
         )))
@@ -546,13 +546,13 @@ class TestRemoveAgentFromTeam(unittest.TestCase):
 class TestUnsupportedCombinations(unittest.TestCase):
     def test_post_send_not_implemented(self):
         parsed = json.loads(asyncio.run(
-            teams_v2(ctx=_make_ctx(), op="POST", definer="SEND")
+            teams(ctx=_make_ctx(), op="POST", definer="SEND")
         ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not", parsed["error"].lower())
 
     def test_delete_unknown_target_not_implemented(self):
-        parsed = json.loads(asyncio.run(teams_v2(
+        parsed = json.loads(asyncio.run(teams(
             ctx=_make_ctx(),
             op="DELETE", target="bogus",
         )))

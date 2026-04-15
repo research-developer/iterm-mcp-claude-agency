@@ -1,10 +1,10 @@
-"""Tests for agents_v2 dispatcher (SP2 Task 5)."""
+"""Tests for agents dispatcher (SP2 Task 5)."""
 import asyncio
 import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from iterm_mcpy.tools.agents_v2 import AgentsDispatcher, agents_v2
+from iterm_mcpy.tools.agents import AgentsDispatcher, agents
 
 
 def _make_ctx(
@@ -40,7 +40,7 @@ def _make_ctx(
 class TestOptions(unittest.TestCase):
     def test_options_returns_schema(self):
         async def go():
-            return await agents_v2(ctx=_make_ctx(), op="OPTIONS")
+            return await agents(ctx=_make_ctx(), op="OPTIONS")
 
         result = asyncio.run(go())
         parsed = json.loads(result)
@@ -57,21 +57,21 @@ class TestOptions(unittest.TestCase):
             self.assertIn(name, subs)
 
     def test_options_lists_post_definers(self):
-        parsed = json.loads(asyncio.run(agents_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(agents(ctx=_make_ctx(), op="OPTIONS")))
         post = parsed["data"]["methods"]["POST"]
         self.assertIn("CREATE", post["definers"])
         self.assertIn("SEND", post["definers"])
         self.assertIn("TRIGGER", post["definers"])
 
     def test_schema_verb_works(self):
-        parsed = json.loads(asyncio.run(agents_v2(ctx=_make_ctx(), op="schema")))
+        parsed = json.loads(asyncio.run(agents(ctx=_make_ctx(), op="schema")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
 
 
 class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
-        parsed = json.loads(asyncio.run(agents_v2(ctx=_make_ctx(), op="frobnicate")))
+        parsed = json.loads(asyncio.run(agents(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"])
 
@@ -80,7 +80,7 @@ class TestWrongDefiner(unittest.TestCase):
     def test_post_replace_rejected(self):
         # REPLACE is in the PUT family, not POST.
         parsed = json.loads(asyncio.run(
-            agents_v2(ctx=_make_ctx(), op="POST", definer="REPLACE")
+            agents(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not in POST family", parsed["error"])
@@ -101,7 +101,7 @@ class TestListAgents(unittest.TestCase):
             Agent(name="bob", session_id="s2", teams=[]),
         ]
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(agent_registry=agent_registry),
             op="list",
         )))
@@ -119,7 +119,7 @@ class TestListAgents(unittest.TestCase):
         agent_registry.list_agents.return_value = [
             Agent(name="alice", session_id="s1", teams=["backend"]),
         ]
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(agent_registry=agent_registry),
             op="list", team="backend",
         )))
@@ -140,7 +140,7 @@ class TestHead(unittest.TestCase):
                 metadata={"key": "value"},
             ),
         ]
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(agent_registry=agent_registry),
             op="HEAD",
         )))
@@ -176,7 +176,7 @@ class TestRegisterAgent(unittest.TestCase):
             name="alice", session_id="sid-1", teams=["backend"],
         )
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(terminal=terminal, agent_registry=agent_registry),
             op="register",  # -> POST + CREATE
             agent_name="alice",
@@ -210,7 +210,7 @@ class TestRegisterAgent(unittest.TestCase):
             name="alice", session_id="sid-1", teams=["a", "b"],
         )
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(terminal=terminal, agent_registry=agent_registry),
             op="POST", definer="CREATE",
             agent_name="alice", session_id="sid-1",
@@ -222,7 +222,7 @@ class TestRegisterAgent(unittest.TestCase):
         )
 
     def test_register_missing_session_id_returns_err(self):
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(),
             op="register", agent_name="alice",
         )))
@@ -230,7 +230,7 @@ class TestRegisterAgent(unittest.TestCase):
         self.assertIn("session_id", parsed["error"].lower())
 
     def test_register_missing_agent_name_returns_err(self):
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(),
             op="register", session_id="sid",
         )))
@@ -241,7 +241,7 @@ class TestRegisterAgent(unittest.TestCase):
         terminal = MagicMock()
         terminal.get_session_by_id = AsyncMock(return_value=None)
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(terminal=terminal),
             op="register", agent_name="alice", session_id="missing",
         )))
@@ -259,7 +259,7 @@ class TestNotify(unittest.TestCase):
         notification_manager = MagicMock()
         notification_manager.add_simple = AsyncMock()
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(notification_manager=notification_manager),
             op="notify", target="notifications",
             agent="alice", level="info", summary="task done",
@@ -280,7 +280,7 @@ class TestNotify(unittest.TestCase):
         notification_manager = MagicMock()
         notification_manager.add_simple = AsyncMock()
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(notification_manager=notification_manager),
             op="POST", definer="SEND", target="notifications",
             agent="alice", level="warning", summary="watch out",
@@ -293,7 +293,7 @@ class TestNotify(unittest.TestCase):
         )
 
     def test_notify_missing_level_returns_err(self):
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(),
             op="notify", target="notifications",
             agent="alice", summary="x",
@@ -320,7 +320,7 @@ class TestGetNotifications(unittest.TestCase):
             ),
         ])
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(notification_manager=notification_manager),
             op="GET", target="notifications", agent="alice",
         )))
@@ -336,7 +336,7 @@ class TestGetNotifications(unittest.TestCase):
         notification_manager = MagicMock()
         notification_manager.get = AsyncMock(return_value=[])
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(notification_manager=notification_manager),
             op="GET", target="notifications",
             level="error", limit=5,
@@ -377,7 +377,7 @@ class TestGetStatusSummary(unittest.TestCase):
         lock_manager = MagicMock()
         lock_manager.get_locks_by_agent.return_value = []
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(
                 notification_manager=notification_manager,
                 agent_registry=agent_registry,
@@ -400,7 +400,7 @@ class TestGetStatusSummary(unittest.TestCase):
         agent_registry = MagicMock()
         agent_registry.list_agents.return_value = []
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(
                 notification_manager=notification_manager,
                 agent_registry=agent_registry,
@@ -419,7 +419,7 @@ class TestGetStatusSummary(unittest.TestCase):
 class TestGetHooks(unittest.TestCase):
     def test_get_hooks_default_op_is_get_config(self):
         async def go():
-            from iterm_mcpy.tools import agents_v2 as mod
+            from iterm_mcpy.tools import agents as mod
             fake_response_json = json.dumps({
                 "operation": "get_config",
                 "success": True,
@@ -430,7 +430,7 @@ class TestGetHooks(unittest.TestCase):
                 "_manage_agent_hooks",
                 new=AsyncMock(return_value=fake_response_json),
             ) as mock_legacy:
-                result = await agents_v2(
+                result = await agents(
                     ctx=_make_ctx(),
                     op="GET", target="hooks",
                 )
@@ -447,7 +447,7 @@ class TestGetHooks(unittest.TestCase):
 
     def test_get_hooks_with_explicit_op(self):
         async def go():
-            from iterm_mcpy.tools import agents_v2 as mod
+            from iterm_mcpy.tools import agents as mod
             fake_response_json = json.dumps({
                 "operation": "get_stats",
                 "success": True,
@@ -458,7 +458,7 @@ class TestGetHooks(unittest.TestCase):
                 "_manage_agent_hooks",
                 new=AsyncMock(return_value=fake_response_json),
             ) as mock_legacy:
-                result = await agents_v2(
+                result = await agents(
                     ctx=_make_ctx(),
                     op="GET", target="hooks",
                     hooks_op="get_stats",
@@ -475,7 +475,7 @@ class TestGetHooks(unittest.TestCase):
 class TestPatchHooks(unittest.TestCase):
     def test_patch_hooks_defaults_to_update_config(self):
         async def go():
-            from iterm_mcpy.tools import agents_v2 as mod
+            from iterm_mcpy.tools import agents as mod
             fake_response_json = json.dumps({
                 "operation": "update_config",
                 "success": True,
@@ -486,7 +486,7 @@ class TestPatchHooks(unittest.TestCase):
                 "_manage_agent_hooks",
                 new=AsyncMock(return_value=fake_response_json),
             ) as mock_legacy:
-                result = await agents_v2(
+                result = await agents(
                     ctx=_make_ctx(),
                     op="PATCH", target="hooks",
                     enabled=False,
@@ -504,7 +504,7 @@ class TestPatchHooks(unittest.TestCase):
 
     def test_patch_hooks_with_explicit_set_variable(self):
         async def go():
-            from iterm_mcpy.tools import agents_v2 as mod
+            from iterm_mcpy.tools import agents as mod
             fake_response_json = json.dumps({
                 "operation": "set_variable",
                 "success": True,
@@ -515,7 +515,7 @@ class TestPatchHooks(unittest.TestCase):
                 "_manage_agent_hooks",
                 new=AsyncMock(return_value=fake_response_json),
             ) as mock_legacy:
-                result = await agents_v2(
+                result = await agents(
                     ctx=_make_ctx(),
                     op="PATCH", target="hooks",
                     hooks_op="set_variable",
@@ -536,7 +536,7 @@ class TestPatchHooks(unittest.TestCase):
 class TestTriggerHook(unittest.TestCase):
     def test_trigger_path_change_delegates(self):
         async def go():
-            from iterm_mcpy.tools import agents_v2 as mod
+            from iterm_mcpy.tools import agents as mod
             fake_response_json = json.dumps({
                 "operation": "trigger_path_change",
                 "success": True,
@@ -547,7 +547,7 @@ class TestTriggerHook(unittest.TestCase):
                 "_manage_agent_hooks",
                 new=AsyncMock(return_value=fake_response_json),
             ) as mock_legacy:
-                result = await agents_v2(
+                result = await agents(
                     ctx=_make_ctx(),
                     op="POST", definer="TRIGGER", target="hooks",
                     hooks_op="trigger_path_change",
@@ -568,7 +568,7 @@ class TestTriggerHook(unittest.TestCase):
         self.assertEqual(request.agent_name, "alice")
 
     def test_trigger_hook_missing_op_returns_err(self):
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(),
             op="POST", definer="TRIGGER", target="hooks",
         )))
@@ -599,7 +599,7 @@ class TestGetLocks(unittest.TestCase):
         terminal = MagicMock()
         terminal.get_session_by_id = AsyncMock(return_value=fake_session)
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(terminal=terminal, lock_manager=lock_manager),
             op="GET", target="locks", agent="alice",
         )))
@@ -616,7 +616,7 @@ class TestGetLocks(unittest.TestCase):
         lock_manager.get_locks_by_agent.assert_called_once_with("alice")
 
     def test_get_locks_missing_agent_returns_err(self):
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(lock_manager=MagicMock()),
             op="GET", target="locks",
         )))
@@ -624,7 +624,7 @@ class TestGetLocks(unittest.TestCase):
         self.assertIn("agent", parsed["error"].lower())
 
     def test_get_locks_no_lock_manager_returns_err(self):
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(),  # lock_manager=None
             op="GET", target="locks", agent="alice",
         )))
@@ -642,7 +642,7 @@ class TestDeleteAgent(unittest.TestCase):
         agent_registry = MagicMock()
         agent_registry.remove_agent.return_value = True
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(agent_registry=agent_registry),
             op="delete", agent_name="alice",
         )))
@@ -655,7 +655,7 @@ class TestDeleteAgent(unittest.TestCase):
         agent_registry = MagicMock()
         agent_registry.remove_agent.return_value = False
 
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(agent_registry=agent_registry),
             op="DELETE", agent_name="missing",
         )))
@@ -663,7 +663,7 @@ class TestDeleteAgent(unittest.TestCase):
         self.assertFalse(parsed["data"]["removed"])
 
     def test_delete_missing_agent_name_returns_err(self):
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(),
             op="delete",
         )))
@@ -679,13 +679,13 @@ class TestDeleteAgent(unittest.TestCase):
 class TestUnsupportedCombinations(unittest.TestCase):
     def test_post_invoke_not_implemented(self):
         parsed = json.loads(asyncio.run(
-            agents_v2(ctx=_make_ctx(), op="POST", definer="INVOKE")
+            agents(ctx=_make_ctx(), op="POST", definer="INVOKE")
         ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not implemented", parsed["error"].lower())
 
     def test_patch_unknown_target_not_implemented(self):
-        parsed = json.loads(asyncio.run(agents_v2(
+        parsed = json.loads(asyncio.run(agents(
             ctx=_make_ctx(),
             op="PATCH", target="bogus",
         )))

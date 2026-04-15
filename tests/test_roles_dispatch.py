@@ -1,11 +1,11 @@
-"""Tests for roles_v2 dispatcher (SP2 Task 11).
+"""Tests for roles dispatcher (SP2 Task 11).
 
 Roles is a read-only collection in SP2:
     - GET /roles              -> list available role definitions
     - GET /roles?target=permissions  -> check_tool_permission
 
 No POST/PATCH/PUT/DELETE — role *assignment* to sessions happens through
-sessions_v2 (target='roles'), not here.
+sessions (target='roles'), not here.
 """
 import asyncio
 import json
@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import MagicMock
 
 
-from iterm_mcpy.tools.roles_v2 import RolesDispatcher, roles_v2
+from iterm_mcpy.tools.roles import RolesDispatcher, roles
 
 
 def _make_ctx(role_manager=None, logger=None, **extra):
@@ -47,7 +47,7 @@ def _make_assignment(role_value="devops"):
 
 class TestOptions(unittest.TestCase):
     def test_options_returns_schema(self):
-        parsed = json.loads(asyncio.run(roles_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(roles(ctx=_make_ctx(), op="OPTIONS")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["collection"], "roles")
@@ -62,7 +62,7 @@ class TestOptions(unittest.TestCase):
         self.assertIn("permissions", parsed["data"]["sub_resources"])
 
     def test_schema_verb_works(self):
-        parsed = json.loads(asyncio.run(roles_v2(ctx=_make_ctx(), op="schema")))
+        parsed = json.loads(asyncio.run(roles(ctx=_make_ctx(), op="schema")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
 
@@ -75,7 +75,7 @@ class TestOptions(unittest.TestCase):
 class TestListAvailable(unittest.TestCase):
     def test_list_returns_role_catalog(self):
         # Uses real DEFAULT_ROLE_CONFIGS / SessionRole — no mocking needed.
-        parsed = json.loads(asyncio.run(roles_v2(ctx=_make_ctx(), op="list")))
+        parsed = json.loads(asyncio.run(roles(ctx=_make_ctx(), op="list")))
         self.assertEqual(parsed["method"], "GET")
         self.assertTrue(parsed["ok"])
 
@@ -84,15 +84,15 @@ class TestListAvailable(unittest.TestCase):
         expected_count = len(list(SessionRole))
         self.assertEqual(parsed["data"]["count"], expected_count)
 
-        roles = parsed["data"]["roles"]
-        role_names = [r["role"] for r in roles]
+        role_list = parsed["data"]["roles"]
+        role_names = [r["role"] for r in role_list]
         self.assertIn("devops", role_names)
         self.assertIn("builder", role_names)
         self.assertIn("orchestrator", role_names)
         self.assertIn("custom", role_names)
 
     def test_list_includes_config_fields(self):
-        parsed = json.loads(asyncio.run(roles_v2(ctx=_make_ctx(), op="list")))
+        parsed = json.loads(asyncio.run(roles(ctx=_make_ctx(), op="list")))
         self.assertTrue(parsed["ok"])
 
         devops = next(r for r in parsed["data"]["roles"] if r["role"] == "devops")
@@ -109,7 +109,7 @@ class TestListAvailable(unittest.TestCase):
         self.assertTrue(orch["can_spawn_agents"])
 
     def test_list_via_get(self):
-        parsed = json.loads(asyncio.run(roles_v2(ctx=_make_ctx(), op="GET")))
+        parsed = json.loads(asyncio.run(roles(ctx=_make_ctx(), op="GET")))
         self.assertEqual(parsed["method"], "GET")
         self.assertTrue(parsed["ok"])
         self.assertGreater(parsed["data"]["count"], 0)
@@ -119,7 +119,7 @@ class TestListAvailable(unittest.TestCase):
         # Verify it works even with an empty lifespan context.
         ctx = MagicMock()
         ctx.request_context.lifespan_context = {}
-        parsed = json.loads(asyncio.run(roles_v2(ctx=ctx, op="list")))
+        parsed = json.loads(asyncio.run(roles(ctx=ctx, op="list")))
         self.assertTrue(parsed["ok"])
         self.assertGreater(parsed["data"]["count"], 0)
 
@@ -135,7 +135,7 @@ class TestCheckPermission(unittest.TestCase):
         rm.is_tool_allowed.return_value = (True, None)
         rm.get_role.return_value = _make_assignment(role_value="builder")
 
-        parsed = json.loads(asyncio.run(roles_v2(
+        parsed = json.loads(asyncio.run(roles(
             ctx=_make_ctx(role_manager=rm),
             op="GET", target="permissions",
             session_id="s-1", tool_name="npm",
@@ -158,7 +158,7 @@ class TestCheckPermission(unittest.TestCase):
         )
         rm.get_role.return_value = _make_assignment(role_value="researcher")
 
-        parsed = json.loads(asyncio.run(roles_v2(
+        parsed = json.loads(asyncio.run(roles(
             ctx=_make_ctx(role_manager=rm),
             op="GET", target="permissions",
             session_id="s-2", tool_name="rm",
@@ -175,7 +175,7 @@ class TestCheckPermission(unittest.TestCase):
         rm.is_tool_allowed.return_value = (True, None)
         rm.get_role.return_value = None
 
-        parsed = json.loads(asyncio.run(roles_v2(
+        parsed = json.loads(asyncio.run(roles(
             ctx=_make_ctx(role_manager=rm),
             op="GET", target="permissions",
             session_id="s-3", tool_name="ls",
@@ -190,7 +190,7 @@ class TestCheckPermission(unittest.TestCase):
         rm.is_tool_allowed.return_value = (True, None)
         rm.get_role.return_value = None
 
-        parsed = json.loads(asyncio.run(roles_v2(
+        parsed = json.loads(asyncio.run(roles(
             ctx=_make_ctx(role_manager=rm),
             op="check", target="permissions",
             session_id="s-1", tool_name="git",
@@ -200,7 +200,7 @@ class TestCheckPermission(unittest.TestCase):
         self.assertTrue(parsed["data"]["allowed"])
 
     def test_check_missing_session_id_returns_err(self):
-        parsed = json.loads(asyncio.run(roles_v2(
+        parsed = json.loads(asyncio.run(roles(
             ctx=_make_ctx(),
             op="GET", target="permissions",
             tool_name="npm",
@@ -209,7 +209,7 @@ class TestCheckPermission(unittest.TestCase):
         self.assertIn("session_id", parsed["error"].lower())
 
     def test_check_missing_tool_name_returns_err(self):
-        parsed = json.loads(asyncio.run(roles_v2(
+        parsed = json.loads(asyncio.run(roles(
             ctx=_make_ctx(),
             op="GET", target="permissions",
             session_id="s-1",
@@ -220,7 +220,7 @@ class TestCheckPermission(unittest.TestCase):
     def test_check_missing_role_manager_returns_err(self):
         ctx = MagicMock()
         ctx.request_context.lifespan_context = {}
-        parsed = json.loads(asyncio.run(roles_v2(
+        parsed = json.loads(asyncio.run(roles(
             ctx=ctx,
             op="GET", target="permissions",
             session_id="s-1", tool_name="npm",
@@ -236,7 +236,7 @@ class TestCheckPermission(unittest.TestCase):
 
 class TestHead(unittest.TestCase):
     def test_head_returns_compact_envelope(self):
-        parsed = json.loads(asyncio.run(roles_v2(ctx=_make_ctx(), op="HEAD")))
+        parsed = json.loads(asyncio.run(roles(ctx=_make_ctx(), op="HEAD")))
         self.assertEqual(parsed["method"], "HEAD")
         self.assertTrue(parsed["ok"])
 
@@ -248,7 +248,7 @@ class TestHead(unittest.TestCase):
 
 class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
-        parsed = json.loads(asyncio.run(roles_v2(ctx=_make_ctx(), op="frobnicate")))
+        parsed = json.loads(asyncio.run(roles(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"])
 
@@ -258,21 +258,21 @@ class TestUnsupportedMethods(unittest.TestCase):
 
     def test_post_not_implemented(self):
         parsed = json.loads(asyncio.run(
-            roles_v2(ctx=_make_ctx(), op="POST", definer="CREATE")
+            roles(ctx=_make_ctx(), op="POST", definer="CREATE")
         ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not implemented", parsed["error"].lower())
 
     def test_patch_not_implemented(self):
         parsed = json.loads(asyncio.run(
-            roles_v2(ctx=_make_ctx(), op="PATCH", definer="MODIFY")
+            roles(ctx=_make_ctx(), op="PATCH", definer="MODIFY")
         ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not implemented", parsed["error"].lower())
 
     def test_delete_not_implemented(self):
         parsed = json.loads(asyncio.run(
-            roles_v2(ctx=_make_ctx(), op="DELETE")
+            roles(ctx=_make_ctx(), op="DELETE")
         ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not implemented", parsed["error"].lower())

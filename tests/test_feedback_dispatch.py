@@ -1,10 +1,10 @@
-"""Tests for feedback_v2 dispatcher (SP2 Task 8)."""
+"""Tests for feedback dispatcher (SP2 Task 8)."""
 import asyncio
 import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from iterm_mcpy.tools.feedback_v2 import FeedbackDispatcher, feedback_v2
+from iterm_mcpy.tools.feedback import FeedbackDispatcher, feedback
 
 
 def _make_ctx(
@@ -118,7 +118,7 @@ def _fake_entry(
 
 class TestOptions(unittest.TestCase):
     def test_options_returns_schema(self):
-        parsed = json.loads(asyncio.run(feedback_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(feedback(ctx=_make_ctx(), op="OPTIONS")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["collection"], "feedback")
@@ -130,7 +130,7 @@ class TestOptions(unittest.TestCase):
             self.assertIn(sub, parsed["data"]["sub_resources"])
 
     def test_options_lists_post_definers(self):
-        parsed = json.loads(asyncio.run(feedback_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(feedback(ctx=_make_ctx(), op="OPTIONS")))
         post = parsed["data"]["methods"]["POST"]
         self.assertIn("CREATE", post["definers"])
         self.assertIn("INVOKE", post["definers"])
@@ -138,19 +138,19 @@ class TestOptions(unittest.TestCase):
         self.assertIn("SEND", post["definers"])
 
     def test_options_lists_patch_modify(self):
-        parsed = json.loads(asyncio.run(feedback_v2(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = json.loads(asyncio.run(feedback(ctx=_make_ctx(), op="OPTIONS")))
         patch_schema = parsed["data"]["methods"]["PATCH"]
         self.assertIn("MODIFY", patch_schema["definers"])
 
     def test_schema_verb_works(self):
-        parsed = json.loads(asyncio.run(feedback_v2(ctx=_make_ctx(), op="schema")))
+        parsed = json.loads(asyncio.run(feedback(ctx=_make_ctx(), op="schema")))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
 
 
 class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
-        parsed = json.loads(asyncio.run(feedback_v2(ctx=_make_ctx(), op="frobnicate")))
+        parsed = json.loads(asyncio.run(feedback(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"])
 
@@ -159,7 +159,7 @@ class TestWrongDefiner(unittest.TestCase):
     def test_post_replace_rejected(self):
         # REPLACE belongs to the PUT family, not POST.
         parsed = json.loads(asyncio.run(
-            feedback_v2(ctx=_make_ctx(), op="POST", definer="REPLACE")
+            feedback(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not in POST family", parsed["error"])
@@ -182,7 +182,7 @@ class TestQuery(unittest.TestCase):
             ),
         ]
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_registry=registry),
             op="query",
         )))
@@ -205,7 +205,7 @@ class TestQuery(unittest.TestCase):
         registry = MagicMock()
         registry.query.return_value = []
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_registry=registry),
             op="GET",
             status="triaged",
@@ -224,7 +224,7 @@ class TestQuery(unittest.TestCase):
         registry = MagicMock()
         registry.query.return_value = []
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_registry=registry),
             op="query",
             status="bogus_status",
@@ -235,7 +235,7 @@ class TestQuery(unittest.TestCase):
     def test_query_empty(self):
         registry = MagicMock()
         registry.query.return_value = []
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_registry=registry),
             op="query",
         )))
@@ -251,7 +251,7 @@ class TestHead(unittest.TestCase):
         # unchanged — the HEAD envelope still gets ok=true.
         registry = MagicMock()
         registry.query.return_value = []
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_registry=registry),
             op="HEAD",
         )))
@@ -288,7 +288,7 @@ class TestSubmitFeedback(unittest.TestCase):
             "core.feedback.FeedbackCollector.capture_context",
             new=AsyncMock(return_value=_fake_context()),
         ):
-            parsed = json.loads(asyncio.run(feedback_v2(
+            parsed = json.loads(asyncio.run(feedback(
                 ctx=_make_ctx(
                     feedback_registry=registry,
                     agent_registry=agent_registry,
@@ -317,7 +317,7 @@ class TestSubmitFeedback(unittest.TestCase):
             "core.feedback.FeedbackCollector.capture_context",
             new=AsyncMock(return_value=_fake_context()),
         ):
-            parsed = json.loads(asyncio.run(feedback_v2(
+            parsed = json.loads(asyncio.run(feedback(
                 ctx=_make_ctx(
                     feedback_registry=registry,
                     agent_registry=agent_registry,
@@ -332,7 +332,7 @@ class TestSubmitFeedback(unittest.TestCase):
         registry.add.assert_called_once()
 
     def test_submit_missing_title_returns_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="submit",
             description="No title",
@@ -341,7 +341,7 @@ class TestSubmitFeedback(unittest.TestCase):
         self.assertIn("title", parsed["error"].lower())
 
     def test_submit_missing_description_returns_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="submit",
             title="Only title",
@@ -367,7 +367,7 @@ class TestCheckTriggers(unittest.TestCase):
         }
         hook_manager.record_error.return_value = FeedbackTriggerType.ERROR_THRESHOLD
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_hook_manager=hook_manager),
             op="invoke", target="triggers",
             agent_name="a1", session_id="s1",
@@ -395,7 +395,7 @@ class TestCheckTriggers(unittest.TestCase):
         hook_manager.record_error.return_value = None
         hook_manager.check_pattern.return_value = None
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_hook_manager=hook_manager),
             op="POST", definer="INVOKE", target="triggers",
             agent_name="a1", session_id="s1",
@@ -416,7 +416,7 @@ class TestCheckTriggers(unittest.TestCase):
         }
         hook_manager.check_pattern.return_value = FeedbackTriggerType.PATTERN_DETECTED
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_hook_manager=hook_manager),
             op="invoke", target="triggers",
             agent_name="a1", session_id="s1",
@@ -433,7 +433,7 @@ class TestCheckTriggers(unittest.TestCase):
             "has_pending_trigger": False, "pending_trigger_type": None,
         }
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_hook_manager=hook_manager),
             op="invoke", target="triggers",
             agent_name="a1", session_id="s1",
@@ -443,7 +443,7 @@ class TestCheckTriggers(unittest.TestCase):
         self.assertEqual(parsed["data"]["triggers_fired"], [])
 
     def test_missing_agent_returns_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="invoke", target="triggers",
             session_id="s1",
@@ -452,7 +452,7 @@ class TestCheckTriggers(unittest.TestCase):
         self.assertIn("agent_name", parsed["error"].lower())
 
     def test_missing_session_returns_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="invoke", target="triggers",
             agent_name="a1",
@@ -479,7 +479,7 @@ class TestFork(unittest.TestCase):
         agent_obj.name = "alice"
         agent_registry.get_agent_by_session.return_value = agent_obj
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(
                 feedback_forker=forker,
                 agent_registry=agent_registry,
@@ -502,7 +502,7 @@ class TestFork(unittest.TestCase):
         forker.create_worktree = AsyncMock(return_value="/tmp/ws/fb-1")
         forker.get_fork_command.return_value = "claude --fork"
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_forker=forker),
             op="POST", definer="TRIGGER", target="worktrees",
             feedback_id="fb-1", session_id="s-1",
@@ -511,7 +511,7 @@ class TestFork(unittest.TestCase):
         self.assertEqual(parsed["definer"], "TRIGGER")
 
     def test_fork_missing_feedback_id_returns_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="fork", target="worktrees",
             session_id="s-1",
@@ -520,7 +520,7 @@ class TestFork(unittest.TestCase):
         self.assertIn("feedback_id", parsed["error"].lower())
 
     def test_fork_missing_session_id_returns_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="fork", target="worktrees",
             feedback_id="fb-1",
@@ -545,7 +545,7 @@ class TestTriageToGithub(unittest.TestCase):
             return_value="https://github.com/owner/repo/issues/42"
         )
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(
                 feedback_registry=registry,
                 github_integration=gh,
@@ -583,7 +583,7 @@ class TestTriageToGithub(unittest.TestCase):
         registry = MagicMock()
         registry.get.return_value = None
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_registry=registry),
             op="triage", target="issues",
             feedback_id="missing",
@@ -598,7 +598,7 @@ class TestTriageToGithub(unittest.TestCase):
         gh = MagicMock()
         gh.create_issue = AsyncMock(return_value=None)
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(
                 feedback_registry=registry,
                 github_integration=gh,
@@ -610,7 +610,7 @@ class TestTriageToGithub(unittest.TestCase):
         self.assertIn("Failed to create GitHub issue", parsed["error"])
 
     def test_triage_missing_feedback_id_returns_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="triage", target="issues",
         )))
@@ -635,7 +635,7 @@ class TestNotifyUpdate(unittest.TestCase):
         )
         registry.update.return_value = updated
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_registry=registry),
             op="notify", target="notifications",
             feedback_id="fb-1",
@@ -670,7 +670,7 @@ class TestNotifyUpdate(unittest.TestCase):
             id_="fb-1", agent_name="alice", status_value="resolved"
         )
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_registry=registry),
             op="POST", definer="SEND", target="notifications",
             feedback_id="fb-1",
@@ -684,7 +684,7 @@ class TestNotifyUpdate(unittest.TestCase):
         registry = MagicMock()
         registry.get.return_value = None
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_registry=registry),
             op="notify", target="notifications",
             feedback_id="missing",
@@ -695,7 +695,7 @@ class TestNotifyUpdate(unittest.TestCase):
         self.assertIn("missing", parsed["error"])
 
     def test_notify_missing_feedback_id_returns_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="notify", target="notifications",
             update_type="resolved",
@@ -705,7 +705,7 @@ class TestNotifyUpdate(unittest.TestCase):
         self.assertIn("feedback_id", parsed["error"].lower())
 
     def test_notify_missing_update_type_returns_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="notify", target="notifications",
             feedback_id="fb-1",
@@ -715,7 +715,7 @@ class TestNotifyUpdate(unittest.TestCase):
         self.assertIn("update_type", parsed["error"].lower())
 
     def test_notify_missing_message_returns_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="notify", target="notifications",
             feedback_id="fb-1",
@@ -741,7 +741,7 @@ class TestGetConfig(unittest.TestCase):
             github_labels=["agent-feedback"],
         )
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_hook_manager=hook_manager),
             op="GET", target="config",
         )))
@@ -758,7 +758,7 @@ class TestGetConfig(unittest.TestCase):
     def test_get_config_via_get_verb(self):
         hook_manager = MagicMock()
         hook_manager.config = _fake_config()
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_hook_manager=hook_manager),
             op="get", target="config",
         )))
@@ -776,7 +776,7 @@ class TestUpdateConfig(unittest.TestCase):
         hook_manager = MagicMock()
         hook_manager.config = _fake_config(error_threshold_count=3)
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_hook_manager=hook_manager),
             op="update", target="config",
             error_threshold_count=7,
@@ -793,7 +793,7 @@ class TestUpdateConfig(unittest.TestCase):
         hook_manager = MagicMock()
         hook_manager.config = _fake_config(periodic_count=100)
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_hook_manager=hook_manager),
             op="PATCH", definer="MODIFY", target="config",
             periodic_tool_call_count=250,
@@ -805,7 +805,7 @@ class TestUpdateConfig(unittest.TestCase):
         hook_manager = MagicMock()
         hook_manager.config = _fake_config(patterns=["existing"])
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_hook_manager=hook_manager),
             op="update", target="config",
             add_pattern="new_pattern",
@@ -818,7 +818,7 @@ class TestUpdateConfig(unittest.TestCase):
         hook_manager = MagicMock()
         hook_manager.config = _fake_config(patterns=["keep", "drop"])
 
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(feedback_hook_manager=hook_manager),
             op="update", target="config",
             remove_pattern="drop",
@@ -828,7 +828,7 @@ class TestUpdateConfig(unittest.TestCase):
         self.assertNotIn("drop", parsed["data"]["pattern"]["patterns"])
 
     def test_update_unknown_target_returns_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="update", target="bogus",
         )))
@@ -843,7 +843,7 @@ class TestUpdateConfig(unittest.TestCase):
 
 class TestDeleteNotImplemented(unittest.TestCase):
     def test_delete_returns_not_implemented_err(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="DELETE",
             feedback_id="fb-1",
@@ -861,7 +861,7 @@ class TestDeleteNotImplemented(unittest.TestCase):
 
 class TestUnsupportedCombinations(unittest.TestCase):
     def test_post_invoke_wrong_target(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="POST", definer="INVOKE", target="bogus",
             agent_name="a1", session_id="s1",
@@ -870,7 +870,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
         self.assertIn("not", parsed["error"].lower())
 
     def test_post_trigger_wrong_target(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="POST", definer="TRIGGER", target="bogus",
             feedback_id="fb-1", session_id="s1",
@@ -879,7 +879,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
         self.assertIn("not", parsed["error"].lower())
 
     def test_post_send_wrong_target(self):
-        parsed = json.loads(asyncio.run(feedback_v2(
+        parsed = json.loads(asyncio.run(feedback(
             ctx=_make_ctx(),
             op="POST", definer="SEND", target="bogus",
             feedback_id="fb-1",

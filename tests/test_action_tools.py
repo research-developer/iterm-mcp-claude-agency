@@ -1,12 +1,12 @@
 """Tests for the SP2 action tools (Tasks 13 + 14).
 
 Covers all 6 action tools in one file:
-    - messages_v2   (POST+SEND)
-    - orchestrate_v2 (POST+INVOKE)
-    - delegate_v2    (POST+INVOKE, target="task" | "plan")
-    - wait_for_v2    (GET)
-    - subscribe_v2   (POST+TRIGGER)
-    - telemetry_v2   (POST+TRIGGER, DELETE)
+    - messages   (POST+SEND)
+    - orchestrate (POST+INVOKE)
+    - delegate    (POST+INVOKE, target="task" | "plan")
+    - wait_for    (GET)
+    - subscribe   (POST+TRIGGER)
+    - telemetry   (POST+TRIGGER, DELETE)
 
 Each tool gets 3–5 tests covering happy path, wrong op, unknown verb, and
 missing required param.
@@ -16,12 +16,12 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from iterm_mcpy.tools.messages_v2 import messages_v2
-from iterm_mcpy.tools.orchestrate_v2 import orchestrate_v2
-from iterm_mcpy.tools.delegate_v2 import delegate_v2
-from iterm_mcpy.tools.wait_for_v2 import wait_for_v2
-from iterm_mcpy.tools.subscribe_v2 import subscribe_v2
-from iterm_mcpy.tools.telemetry_v2 import telemetry_v2
+from iterm_mcpy.tools.messages import messages
+from iterm_mcpy.tools.orchestrate import orchestrate
+from iterm_mcpy.tools.delegate import delegate
+from iterm_mcpy.tools.wait_for import wait_for
+from iterm_mcpy.tools.subscribe import subscribe
+from iterm_mcpy.tools.telemetry import telemetry
 
 
 def _make_ctx(**extra):
@@ -43,7 +43,7 @@ def _make_ctx(**extra):
 
 
 # ========================================================================= #
-# messages_v2 — POST+SEND                                                   #
+# messages — POST+SEND                                                   #
 # ========================================================================= #
 
 
@@ -61,10 +61,10 @@ class TestMessagesV2(unittest.TestCase):
             )
 
         with patch(
-            "iterm_mcpy.tools.messages_v2.execute_cascade_request",
+            "iterm_mcpy.tools.messages.execute_cascade_request",
             side_effect=fake_cascade,
         ):
-            parsed = json.loads(asyncio.run(messages_v2(
+            parsed = json.loads(asyncio.run(messages(
                 ctx=_make_ctx(),
                 op="send",
                 cascade={"broadcast": "hello"},
@@ -75,8 +75,8 @@ class TestMessagesV2(unittest.TestCase):
         self.assertEqual(parsed["data"]["delivered_count"], 1)
 
     def test_wrong_op_returns_err(self):
-        # GET is the wrong family for messages_v2.
-        parsed = json.loads(asyncio.run(messages_v2(
+        # GET is the wrong family for messages.
+        parsed = json.loads(asyncio.run(messages(
             ctx=_make_ctx(),
             op="GET",
         )))
@@ -84,8 +84,8 @@ class TestMessagesV2(unittest.TestCase):
         self.assertIn("POST+SEND", parsed["error"])
 
     def test_wrong_definer_returns_err(self):
-        # CREATE is a valid POST definer but not what messages_v2 supports.
-        parsed = json.loads(asyncio.run(messages_v2(
+        # CREATE is a valid POST definer but not what messages supports.
+        parsed = json.loads(asyncio.run(messages(
             ctx=_make_ctx(),
             op="POST", definer="CREATE",
         )))
@@ -93,7 +93,7 @@ class TestMessagesV2(unittest.TestCase):
         self.assertIn("POST+SEND", parsed["error"])
 
     def test_unknown_verb_returns_err(self):
-        parsed = json.loads(asyncio.run(messages_v2(
+        parsed = json.loads(asyncio.run(messages(
             ctx=_make_ctx(),
             op="frobnicate",
         )))
@@ -101,7 +101,7 @@ class TestMessagesV2(unittest.TestCase):
         self.assertIn("Unknown op", parsed["error"])
 
     def test_missing_cascade_and_targets_returns_err(self):
-        parsed = json.loads(asyncio.run(messages_v2(
+        parsed = json.loads(asyncio.run(messages(
             ctx=_make_ctx(),
             op="send",
         )))
@@ -110,7 +110,7 @@ class TestMessagesV2(unittest.TestCase):
         self.assertIn("targets", parsed["error"].lower())
 
     def test_both_cascade_and_targets_returns_err(self):
-        parsed = json.loads(asyncio.run(messages_v2(
+        parsed = json.loads(asyncio.run(messages(
             ctx=_make_ctx(),
             op="send",
             cascade={"broadcast": "hi"},
@@ -121,7 +121,7 @@ class TestMessagesV2(unittest.TestCase):
 
 
 # ========================================================================= #
-# orchestrate_v2 — POST+INVOKE                                              #
+# orchestrate — POST+INVOKE                                              #
 # ========================================================================= #
 
 
@@ -133,7 +133,7 @@ class TestOrchestrateV2(unittest.TestCase):
         )
 
     def test_happy_path_empty_playbook(self):
-        parsed = json.loads(asyncio.run(orchestrate_v2(
+        parsed = json.loads(asyncio.run(orchestrate(
             ctx=self._ctx(),
             op="invoke",
             playbook={},  # no layout/commands/cascade/reads
@@ -153,10 +153,10 @@ class TestOrchestrateV2(unittest.TestCase):
             )
 
         with patch(
-            "iterm_mcpy.tools.orchestrate_v2.execute_write_request",
+            "iterm_mcpy.tools.orchestrate.execute_write_request",
             side_effect=fake_write,
         ):
-            parsed = json.loads(asyncio.run(orchestrate_v2(
+            parsed = json.loads(asyncio.run(orchestrate(
                 ctx=self._ctx(),
                 op="POST", definer="INVOKE",
                 playbook={
@@ -178,7 +178,7 @@ class TestOrchestrateV2(unittest.TestCase):
         self.assertEqual(parsed["data"]["commands"][0]["name"], "step1")
 
     def test_wrong_op_returns_err(self):
-        parsed = json.loads(asyncio.run(orchestrate_v2(
+        parsed = json.loads(asyncio.run(orchestrate(
             ctx=self._ctx(),
             op="GET",
         )))
@@ -186,7 +186,7 @@ class TestOrchestrateV2(unittest.TestCase):
         self.assertIn("POST+INVOKE", parsed["error"])
 
     def test_unknown_verb_returns_err(self):
-        parsed = json.loads(asyncio.run(orchestrate_v2(
+        parsed = json.loads(asyncio.run(orchestrate(
             ctx=self._ctx(),
             op="frobnicate",
         )))
@@ -194,7 +194,7 @@ class TestOrchestrateV2(unittest.TestCase):
         self.assertIn("Unknown op", parsed["error"])
 
     def test_missing_playbook_returns_err(self):
-        parsed = json.loads(asyncio.run(orchestrate_v2(
+        parsed = json.loads(asyncio.run(orchestrate(
             ctx=self._ctx(),
             op="invoke",
         )))
@@ -203,7 +203,7 @@ class TestOrchestrateV2(unittest.TestCase):
 
 
 # ========================================================================= #
-# delegate_v2 — POST+INVOKE (target=task|plan)                              #
+# delegate — POST+INVOKE (target=task|plan)                              #
 # ========================================================================= #
 
 
@@ -231,8 +231,8 @@ class TestDelegateV2(unittest.TestCase):
         manager_registry.get_manager.return_value = manager
 
         # Also patch _setup_manager_callbacks (it's fine as a no-op here).
-        with patch("iterm_mcpy.tools.delegate_v2._setup_manager_callbacks"):
-            parsed = json.loads(asyncio.run(delegate_v2(
+        with patch("iterm_mcpy.tools.delegate._setup_manager_callbacks"):
+            parsed = json.loads(asyncio.run(delegate(
                 ctx=self._ctx(manager_registry=manager_registry),
                 op="delegate",
                 target="task",
@@ -246,7 +246,7 @@ class TestDelegateV2(unittest.TestCase):
         self.assertEqual(parsed["data"]["worker"], "alice")
 
     def test_task_missing_manager_returns_err(self):
-        parsed = json.loads(asyncio.run(delegate_v2(
+        parsed = json.loads(asyncio.run(delegate(
             ctx=self._ctx(),
             op="delegate",
             target="task",
@@ -259,7 +259,7 @@ class TestDelegateV2(unittest.TestCase):
         manager_registry = MagicMock()
         manager_registry.get_manager.return_value = None
 
-        parsed = json.loads(asyncio.run(delegate_v2(
+        parsed = json.loads(asyncio.run(delegate(
             ctx=self._ctx(manager_registry=manager_registry),
             op="delegate",
             target="task",
@@ -283,8 +283,8 @@ class TestDelegateV2(unittest.TestCase):
         manager_registry = MagicMock()
         manager_registry.get_manager.return_value = manager
 
-        with patch("iterm_mcpy.tools.delegate_v2._setup_manager_callbacks"):
-            parsed = json.loads(asyncio.run(delegate_v2(
+        with patch("iterm_mcpy.tools.delegate._setup_manager_callbacks"):
+            parsed = json.loads(asyncio.run(delegate(
                 ctx=self._ctx(manager_registry=manager_registry),
                 op="POST", definer="INVOKE",
                 target="plan",
@@ -300,7 +300,7 @@ class TestDelegateV2(unittest.TestCase):
         self.assertEqual(parsed["data"]["plan_name"], "p1")
 
     def test_plan_missing_plan_returns_err(self):
-        parsed = json.loads(asyncio.run(delegate_v2(
+        parsed = json.loads(asyncio.run(delegate(
             ctx=self._ctx(),
             op="delegate",
             target="plan",
@@ -310,7 +310,7 @@ class TestDelegateV2(unittest.TestCase):
         self.assertIn("plan", parsed["error"].lower())
 
     def test_bad_target_returns_err(self):
-        parsed = json.loads(asyncio.run(delegate_v2(
+        parsed = json.loads(asyncio.run(delegate(
             ctx=self._ctx(),
             op="delegate",
             target="mystery",
@@ -319,7 +319,7 @@ class TestDelegateV2(unittest.TestCase):
         self.assertIn("target must be", parsed["error"])
 
     def test_wrong_op_returns_err(self):
-        parsed = json.loads(asyncio.run(delegate_v2(
+        parsed = json.loads(asyncio.run(delegate(
             ctx=self._ctx(),
             op="GET",
         )))
@@ -328,7 +328,7 @@ class TestDelegateV2(unittest.TestCase):
 
 
 # ========================================================================= #
-# wait_for_v2 — GET                                                         #
+# wait_for — GET                                                         #
 # ========================================================================= #
 
 
@@ -349,7 +349,7 @@ class TestWaitForV2(unittest.TestCase):
         notification_manager = MagicMock()
         notification_manager.add_simple = AsyncMock()
 
-        parsed = json.loads(asyncio.run(wait_for_v2(
+        parsed = json.loads(asyncio.run(wait_for(
             ctx=_make_ctx(
                 agent_registry=agent_registry,
                 terminal=terminal,
@@ -368,7 +368,7 @@ class TestWaitForV2(unittest.TestCase):
         agent_registry = MagicMock()
         agent_registry.get_agent.return_value = None
 
-        parsed = json.loads(asyncio.run(wait_for_v2(
+        parsed = json.loads(asyncio.run(wait_for(
             ctx=_make_ctx(agent_registry=agent_registry),
             op="GET",
             agent_name="ghost",
@@ -379,7 +379,7 @@ class TestWaitForV2(unittest.TestCase):
         self.assertIn("ghost", parsed["data"]["summary"])
 
     def test_wrong_op_returns_err(self):
-        parsed = json.loads(asyncio.run(wait_for_v2(
+        parsed = json.loads(asyncio.run(wait_for(
             ctx=_make_ctx(),
             op="POST",
             agent_name="alice",
@@ -388,7 +388,7 @@ class TestWaitForV2(unittest.TestCase):
         self.assertIn("GET", parsed["error"])
 
     def test_missing_agent_name_returns_err(self):
-        parsed = json.loads(asyncio.run(wait_for_v2(
+        parsed = json.loads(asyncio.run(wait_for(
             ctx=_make_ctx(),
             op="GET",
         )))
@@ -396,7 +396,7 @@ class TestWaitForV2(unittest.TestCase):
         self.assertIn("agent_name", parsed["error"])
 
     def test_unknown_verb_returns_err(self):
-        parsed = json.loads(asyncio.run(wait_for_v2(
+        parsed = json.loads(asyncio.run(wait_for(
             ctx=_make_ctx(),
             op="frobnicate",
         )))
@@ -404,7 +404,7 @@ class TestWaitForV2(unittest.TestCase):
         self.assertIn("Unknown op", parsed["error"])
 
     def test_out_of_range_timeout_returns_err(self):
-        parsed = json.loads(asyncio.run(wait_for_v2(
+        parsed = json.loads(asyncio.run(wait_for(
             ctx=_make_ctx(),
             op="GET",
             agent_name="alice",
@@ -415,7 +415,7 @@ class TestWaitForV2(unittest.TestCase):
 
 
 # ========================================================================= #
-# subscribe_v2 — POST+TRIGGER                                               #
+# subscribe — POST+TRIGGER                                               #
 # ========================================================================= #
 
 
@@ -424,7 +424,7 @@ class TestSubscribeV2(unittest.TestCase):
         event_bus = MagicMock()
         event_bus.subscribe_to_pattern = AsyncMock(return_value="sub-123")
 
-        parsed = json.loads(asyncio.run(subscribe_v2(
+        parsed = json.loads(asyncio.run(subscribe(
             ctx=_make_ctx(event_bus=event_bus),
             op="subscribe",
             pattern=r"error:\s",
@@ -441,7 +441,7 @@ class TestSubscribeV2(unittest.TestCase):
         event_bus = MagicMock()
         event_bus.subscribe_to_pattern = AsyncMock(return_value="sub-1")
 
-        parsed = json.loads(asyncio.run(subscribe_v2(
+        parsed = json.loads(asyncio.run(subscribe(
             ctx=_make_ctx(event_bus=event_bus),
             op="POST", definer="TRIGGER",
             pattern="foo",
@@ -449,7 +449,7 @@ class TestSubscribeV2(unittest.TestCase):
         self.assertTrue(parsed["ok"])
 
     def test_wrong_op_returns_err(self):
-        parsed = json.loads(asyncio.run(subscribe_v2(
+        parsed = json.loads(asyncio.run(subscribe(
             ctx=_make_ctx(),
             op="GET",
             pattern="foo",
@@ -458,7 +458,7 @@ class TestSubscribeV2(unittest.TestCase):
         self.assertIn("POST+TRIGGER", parsed["error"])
 
     def test_wrong_definer_returns_err(self):
-        parsed = json.loads(asyncio.run(subscribe_v2(
+        parsed = json.loads(asyncio.run(subscribe(
             ctx=_make_ctx(),
             op="POST", definer="CREATE",
             pattern="foo",
@@ -467,7 +467,7 @@ class TestSubscribeV2(unittest.TestCase):
         self.assertIn("POST+TRIGGER", parsed["error"])
 
     def test_missing_pattern_returns_err(self):
-        parsed = json.loads(asyncio.run(subscribe_v2(
+        parsed = json.loads(asyncio.run(subscribe(
             ctx=_make_ctx(),
             op="subscribe",
         )))
@@ -475,7 +475,7 @@ class TestSubscribeV2(unittest.TestCase):
         self.assertIn("pattern", parsed["error"].lower())
 
     def test_bad_regex_returns_err(self):
-        parsed = json.loads(asyncio.run(subscribe_v2(
+        parsed = json.loads(asyncio.run(subscribe(
             ctx=_make_ctx(),
             op="subscribe",
             pattern="[bad(regex",
@@ -485,7 +485,7 @@ class TestSubscribeV2(unittest.TestCase):
 
 
 # ========================================================================= #
-# telemetry_v2 — POST+TRIGGER / DELETE                                      #
+# telemetry — POST+TRIGGER / DELETE                                      #
 # ========================================================================= #
 
 
@@ -497,7 +497,7 @@ class TestTelemetryV2(unittest.TestCase):
         )
         # Patch start_dashboard where it's imported — inside _start_dashboard.
         with patch("core.dashboard.start_dashboard", new=AsyncMock(return_value="running on 9999")):
-            parsed = json.loads(asyncio.run(telemetry_v2(
+            parsed = json.loads(asyncio.run(telemetry(
                 ctx=ctx,
                 op="start",
                 port=9999,
@@ -511,7 +511,7 @@ class TestTelemetryV2(unittest.TestCase):
 
     def test_stop_happy_path(self):
         with patch("core.dashboard.stop_dashboard", new=AsyncMock()):
-            parsed = json.loads(asyncio.run(telemetry_v2(
+            parsed = json.loads(asyncio.run(telemetry(
                 ctx=_make_ctx(),
                 op="stop",
             )))
@@ -520,7 +520,7 @@ class TestTelemetryV2(unittest.TestCase):
         self.assertEqual(parsed["data"]["status"], "stopped")
 
     def test_wrong_definer_returns_err(self):
-        parsed = json.loads(asyncio.run(telemetry_v2(
+        parsed = json.loads(asyncio.run(telemetry(
             ctx=_make_ctx(),
             op="POST", definer="CREATE",
         )))
@@ -528,7 +528,7 @@ class TestTelemetryV2(unittest.TestCase):
         self.assertIn("TRIGGER", parsed["error"])
 
     def test_unknown_verb_returns_err(self):
-        parsed = json.loads(asyncio.run(telemetry_v2(
+        parsed = json.loads(asyncio.run(telemetry(
             ctx=_make_ctx(),
             op="frobnicate",
         )))
@@ -536,7 +536,7 @@ class TestTelemetryV2(unittest.TestCase):
         self.assertIn("Unknown op", parsed["error"])
 
     def test_patch_not_supported(self):
-        parsed = json.loads(asyncio.run(telemetry_v2(
+        parsed = json.loads(asyncio.run(telemetry(
             ctx=_make_ctx(),
             op="PATCH", definer="MODIFY",
         )))
@@ -553,21 +553,21 @@ class TestRegistration(unittest.TestCase):
     def test_all_action_tools_register(self):
         """Each action tool's ``register`` helper should call mcp.tool(name=...)."""
         from iterm_mcpy.tools import (
-            messages_v2 as m,
-            orchestrate_v2 as o,
-            delegate_v2 as d,
-            wait_for_v2 as w,
-            subscribe_v2 as s,
-            telemetry_v2 as t,
+            messages as m,
+            orchestrate as o,
+            delegate as d,
+            wait_for as w,
+            subscribe as s,
+            telemetry as t,
         )
 
         for mod, expected_name in [
-            (m, "messages_v2"),
-            (o, "orchestrate_v2"),
-            (d, "delegate_v2"),
-            (w, "wait_for_v2"),
-            (s, "subscribe_v2"),
-            (t, "telemetry_v2"),
+            (m, "messages"),
+            (o, "orchestrate"),
+            (d, "delegate"),
+            (w, "wait_for"),
+            (s, "subscribe"),
+            (t, "telemetry"),
         ]:
             mcp = MagicMock()
             tool_decorator = MagicMock(side_effect=lambda f: f)
