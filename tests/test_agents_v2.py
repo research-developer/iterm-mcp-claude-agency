@@ -427,7 +427,7 @@ class TestGetHooks(unittest.TestCase):
             })
             with patch.object(
                 mod,
-                "_manage_agent_hooks_legacy",
+                "_manage_agent_hooks",
                 new=AsyncMock(return_value=fake_response_json),
             ) as mock_legacy:
                 result = await agents_v2(
@@ -455,7 +455,7 @@ class TestGetHooks(unittest.TestCase):
             })
             with patch.object(
                 mod,
-                "_manage_agent_hooks_legacy",
+                "_manage_agent_hooks",
                 new=AsyncMock(return_value=fake_response_json),
             ) as mock_legacy:
                 result = await agents_v2(
@@ -483,7 +483,7 @@ class TestPatchHooks(unittest.TestCase):
             })
             with patch.object(
                 mod,
-                "_manage_agent_hooks_legacy",
+                "_manage_agent_hooks",
                 new=AsyncMock(return_value=fake_response_json),
             ) as mock_legacy:
                 result = await agents_v2(
@@ -512,7 +512,7 @@ class TestPatchHooks(unittest.TestCase):
             })
             with patch.object(
                 mod,
-                "_manage_agent_hooks_legacy",
+                "_manage_agent_hooks",
                 new=AsyncMock(return_value=fake_response_json),
             ) as mock_legacy:
                 result = await agents_v2(
@@ -544,7 +544,7 @@ class TestTriggerHook(unittest.TestCase):
             })
             with patch.object(
                 mod,
-                "_manage_agent_hooks_legacy",
+                "_manage_agent_hooks",
                 new=AsyncMock(return_value=fake_response_json),
             ) as mock_legacy:
                 result = await agents_v2(

@@ -1,9 +1,9 @@
-"""SP2 method-semantic `sessions_v2` tool — Tasks 4a + 4b + 4c + 4d + 4e.
+"""SP2 method-semantic `sessions` tool.
 
-This module introduces the first collection tool built on the
-MethodDispatcher base class. It currently implements:
+A single collection tool built on the MethodDispatcher base class,
+implementing the WebSpec method surface for sessions:
 
-    GET     — list/filter sessions (delegates to _list_sessions_core),
+    GET     — list/filter sessions (via _list_sessions_core),
               read terminal output when target="output", or return
               processing state when target="status".
     HEAD    — compact projection of GET (auto via HEAD_FIELDS)
@@ -14,7 +14,6 @@ MethodDispatcher base class. It currently implements:
     POST + SEND   — write to session(s) when target="output"
               (delegates to execute_write_request)
               OR send control char / special key when target="keys"
-              (unifies old send_control_character / send_special_key)
     POST + TRIGGER — start monitoring a session when target="monitoring"
               (delegates to _start_monitoring_core).
     PATCH   — update sub-resources: tags (MODIFY replaces, APPEND adds),
@@ -22,40 +21,687 @@ MethodDispatcher base class. It currently implements:
               session itself (target='active' + focus=true), or
               appearance/modifications (target='appearance' or None)
               covering colors, suspend/resume, badge, and focus cooldown.
-              Replaces set_session_tags, assign_session_role,
-              manage_session_lock (lock / request_access),
-              set_active_session, and modify_sessions.
     DELETE  — remove sub-resources: roles (removes assignment), locks
               (releases the lock), or monitoring (stops the monitor).
 
-The tool is registered under the provisional name ``sessions_v2`` so it
-coexists with the 17 legacy session-related tools. The final cutover
-(renaming to ``sessions``) happens at the end of SP2.
+This module owns its helpers (``_list_sessions_core``,
+``_split_session_core``, ``_start_monitoring_core``,
+``_stop_monitoring_core``, ``_apply_session_modification``, plus
+``_extract_last_message`` and ``_ensure_model``) directly — the SP1
+per-verb modules (list_sessions / split_session / monitoring /
+modifications) no longer exist.
 """
-from typing import List, Optional
+import asyncio
+import logging
+import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import Context
 
+from core.agents import AgentRegistry
+from core.flows import EventBus
 from core.models import (
+    AGENT_CLI_COMMANDS,
     CreateSessionsRequest,
+    ListSessionsResponse,
+    ModificationResult,
     ReadSessionsRequest,
     ReadTarget,
+    SessionInfo,
     SessionMessage,
+    SessionModification,
+    SessionRole,
     SessionTarget,
+    SplitSessionRequest,
+    SplitSessionResponse,
     WriteToSessionsRequest,
 )
+from core.roles import RoleManager
+from core.session import ItermSession
+from core.tags import FocusCooldownManager
+from core.terminal import ItermTerminal
 from iterm_mcpy.dispatcher import MethodDispatcher
 from iterm_mcpy.helpers import (
     execute_create_sessions,
     execute_read_request,
     execute_write_request,
     resolve_session,
+    resolve_target_sessions,
 )
-from iterm_mcpy.tools.sessions import _list_sessions_core, _split_session_core
-from iterm_mcpy.tools.monitoring import (
-    _start_monitoring_core,
-    _stop_monitoring_core,
-)
+
+
+# ------------------------------- Helpers -------------------------------- #
+
+# Constants for "last message" extraction during session enrichment.
+MAX_LAST_MESSAGE_LENGTH = 40
+MIN_MEANINGFUL_CONTENT_LENGTH = 10
+
+
+def _ensure_model(model_cls, payload):
+    """Validate or coerce an incoming payload into a Pydantic model."""
+    if isinstance(payload, model_cls):
+        return payload
+    return model_cls.model_validate(payload)
+
+
+def _extract_last_message(screen_content: str) -> Optional[str]:
+    """Extract the last meaningful message line from terminal output.
+
+    Scans terminal output for meaningful content, skipping Claude's status
+    indicators (⏺ markers), tool calls, and shell prompts to find actual
+    message text.
+
+    Args:
+        screen_content: Recent terminal output
+
+    Returns:
+        Truncated last message or None
+    """
+    if not screen_content:
+        return None
+
+    lines = screen_content.strip().split('\n')
+
+    # Find the last meaningful output line (skip status markers and prompts).
+    for line in reversed(lines):
+        line = line.strip()
+        # Skip empty lines and prompts.
+        if not line or line.startswith('❯') or line.startswith('$'):
+            continue
+        # Skip tool calls and system output.
+        if '(MCP)' in line or 'Bash(' in line or 'Read(' in line:
+            continue
+        # Skip lines that are just status indicators (⏺ with parentheses = tool status).
+        if line.startswith('⏺') and '(' in line and ')' in line:
+            continue
+        # This looks like actual Claude output.
+        if len(line) > MIN_MEANINGFUL_CONTENT_LENGTH:
+            # Truncate and add ellipsis.
+            if len(line) > MAX_LAST_MESSAGE_LENGTH:
+                return f'"{line[:MAX_LAST_MESSAGE_LENGTH - 3]}..."'
+            return f'"{line}"'
+
+    return None
+
+
+async def _list_sessions_core(
+    ctx: Context,
+    *,
+    agents_only: bool = False,
+    tag: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    match: str = "any",
+    locked: Optional[bool] = None,
+    locked_by: Optional[str] = None,
+    session_id: Optional[str] = None,
+    agent: Optional[str] = None,
+    team: Optional[str] = None,
+    role: Optional[str] = None,
+    include_message: bool = True,
+    force_enrich: bool = True,
+) -> ListSessionsResponse:
+    """Core listing/filtering pipeline backing the sessions GET handler.
+
+    Applies all filters and enriches each match into a SessionInfo (cwd,
+    last_message, last_activity, process_name). Returns the raw response
+    model so the dispatcher can serialize it via the envelope.
+
+    Args:
+        ctx: MCP context, used to pull terminal, agent_registry, lock_manager,
+            role_manager, and logger from the lifespan context.
+        agents_only: If True, only include sessions with registered agents.
+        tag, tags, match: Tag filters (single or multiple with "any"/"all").
+        locked, locked_by: Lock filters.
+        session_id, agent, team: Identity filters (folded in from resolve_session).
+        role: Role filter (folded in from the SP1 get_sessions_by_role tool).
+        include_message: Whether to populate last_message (expensive).
+        force_enrich: If True (default), always enrich with cwd/screen/etc.
+            Callers that only care about a compact projection can pass False
+            to skip the expensive per-session calls.
+
+    Returns:
+        ListSessionsResponse with all matching sessions.
+
+    Raises:
+        ValueError: If tag/lock filters are used without a tag_lock_manager,
+            or if an unknown role name is supplied.
+    """
+    terminal = ctx.request_context.lifespan_context["terminal"]
+    agent_registry = ctx.request_context.lifespan_context["agent_registry"]
+    lock_manager = ctx.request_context.lifespan_context.get("tag_lock_manager")
+    role_manager = ctx.request_context.lifespan_context.get("role_manager")
+    logger = ctx.request_context.lifespan_context["logger"]
+
+    # Build filter description for logging.
+    filters: List[str] = []
+    if agents_only:
+        filters.append("agents_only")
+    if tag:
+        filters.append(f"tag={tag}")
+    if tags:
+        filters.append(f"tags={tags} (match={match})")
+    if locked is not None:
+        filters.append(f"locked={locked}")
+    if locked_by:
+        filters.append(f"locked_by={locked_by}")
+    if session_id:
+        filters.append(f"session_id={session_id}")
+    if agent:
+        filters.append(f"agent={agent}")
+    if team:
+        filters.append(f"team={team}")
+    if role:
+        filters.append(f"role={role}")
+
+    filter_desc = f" [{', '.join(filters)}]" if filters else ""
+    logger.info(f"Listing sessions{filter_desc}")
+
+    # Combine single tag and multiple tags for filtering.
+    all_filter_tags: List[str] = []
+    if tag:
+        all_filter_tags.append(tag)
+    if tags:
+        all_filter_tags.extend(tags)
+
+    requires_lock_manager = bool(all_filter_tags) or locked is not None or locked_by is not None
+    if requires_lock_manager and lock_manager is None:
+        logger.warning("Tag/lock filtering requested but tag_lock_manager is not available")
+        raise ValueError(
+            "Tag and lock filtering requires the tag_lock_manager to be initialized"
+        )
+
+    # Resolve role filter to a set of session IDs up front.
+    role_session_ids: Optional[set] = None
+    if role is not None:
+        if role_manager is None:
+            raise ValueError("Role filtering requires the role_manager to be initialized")
+        try:
+            session_role = SessionRole(role.lower())
+        except ValueError as exc:
+            valid_roles = [r.value for r in SessionRole]
+            raise ValueError(
+                f"Invalid role '{role}'. Valid roles are: {valid_roles}"
+            ) from exc
+        role_session_ids = set(role_manager.get_sessions_by_role(session_role))
+
+    sessions = list(terminal.sessions.values())
+    result: List[SessionInfo] = []
+
+    for session in sessions:
+        agent_obj = agent_registry.get_agent_by_session(session.id)
+
+        # Apply agents_only filter.
+        if agents_only and agent_obj is None:
+            continue
+
+        # Apply identity filters.
+        if session_id is not None and session.id != session_id:
+            continue
+        if agent is not None and (agent_obj is None or agent_obj.name != agent):
+            continue
+        if team is not None and (agent_obj is None or team not in (agent_obj.teams or [])):
+            continue
+
+        # Apply role filter.
+        if role_session_ids is not None and session.id not in role_session_ids:
+            continue
+
+        # Get lock info.
+        is_locked = False
+        lock_owner = None
+        lock_time = None
+        pending_requests = 0
+        session_tags: List[str] = []
+
+        if lock_manager:
+            session_tags = lock_manager.get_tags(session.id)
+            lock_info = lock_manager.get_lock_info(session.id)
+            if lock_info:
+                is_locked = True
+                lock_owner = lock_info.owner
+                lock_time = lock_info.locked_at
+                pending_requests = len(lock_info.pending_requests)
+
+        # Apply tag filter.
+        if all_filter_tags:
+            if match == "all":
+                if not lock_manager or not lock_manager.has_all_tags(session.id, all_filter_tags):
+                    continue
+            else:  # "any" match
+                if not lock_manager or not lock_manager.has_any_tags(session.id, all_filter_tags):
+                    continue
+
+        # Apply locked filter.
+        if locked is not None:
+            if locked and not is_locked:
+                continue
+            if not locked and is_locked:
+                continue
+
+        # Apply locked_by filter.
+        if locked_by is not None:
+            if lock_owner != locked_by:
+                continue
+
+        # Gather extended session context.
+        session_cwd = None
+        last_message = None
+        last_activity_dt = None
+        process_name = None
+
+        if force_enrich:
+            try:
+                session_cwd = await session.get_cwd()
+            except Exception as e:
+                logger.debug(f"Error getting CWD for session {session.id}: {e}")
+
+            if include_message:
+                try:
+                    screen_content = await session.get_screen_contents(max_lines=15)
+                    last_message = _extract_last_message(screen_content)
+                except Exception as e:
+                    logger.debug(f"Error getting screen for session {session.id}: {e}")
+
+            try:
+                last_update = getattr(session, "last_update_time", None)
+                if last_update:
+                    last_activity_dt = datetime.fromtimestamp(last_update)
+            except Exception as e:
+                logger.debug(f"Error converting last_update_time for session {session.id}: {e}")
+
+            name = session.name
+            if "(" in name and name.endswith(")"):
+                process_name = name[name.rfind("(") + 1:-1]
+
+        session_info = SessionInfo(
+            session_id=session.id,
+            name=session.name,
+            persistent_id=session.persistent_id,
+            agent=agent_obj.name if agent_obj else None,
+            team=agent_obj.teams[0] if agent_obj and agent_obj.teams else None,
+            teams=agent_obj.teams if agent_obj else [],
+            is_processing=getattr(session, "is_processing", False),
+            suspended=getattr(session, "is_suspended", False),
+            suspended_at=getattr(session, "suspended_at", None),
+            suspended_by=getattr(session, "suspended_by", None),
+            tags=session_tags,
+            locked=is_locked,
+            locked_by=lock_owner,
+            locked_at=lock_time,
+            pending_access_requests=pending_requests,
+            cwd=session_cwd,
+            last_activity=last_activity_dt,
+            last_message=last_message,
+            process_name=process_name,
+        )
+        result.append(session_info)
+
+    logger.info(f"Found {len(result)} active sessions")
+
+    return ListSessionsResponse(
+        sessions=result,
+        total_count=len(result),
+        filter_applied=bool(filters),
+    )
+
+
+async def _split_session_core(
+    split_request: SplitSessionRequest,
+    terminal,
+    agent_registry,
+    role_manager: RoleManager,
+    logger,
+    profile_manager=None,
+) -> SplitSessionResponse:
+    """Core split-session logic backing POST /sessions/splits.
+
+    Creates a new pane by splitting an existing session, registers an agent
+    if requested, applies team colors, optionally launches an AI agent CLI,
+    starts monitoring, and assigns a role. Returns the SplitSessionResponse.
+
+    Raises:
+        ValueError: When the target session can't be found or matches
+            multiple sessions ambiguously.
+    """
+    target_sessions = await resolve_target_sessions(
+        terminal, agent_registry, [split_request.target]
+    )
+
+    if not target_sessions:
+        raise ValueError(
+            f"Target session not found: {split_request.target.model_dump()}"
+        )
+
+    if len(target_sessions) > 1:
+        matched_ids = [s.id for s in target_sessions]
+        raise ValueError(
+            f"Ambiguous target: multiple sessions matched {matched_ids}. "
+            "Please be more specific."
+        )
+
+    source_session = target_sessions[0]
+
+    new_session = await terminal.split_session_directional(
+        session_id=source_session.id,
+        direction=split_request.direction,
+        name=split_request.name,
+        profile=split_request.profile,
+    )
+
+    agent_name = None
+    team_name = split_request.team
+
+    # Register agent if specified.
+    if split_request.agent:
+        teams = [team_name] if team_name else []
+        agent_registry.register_agent(
+            name=split_request.agent,
+            session_id=new_session.id,
+            teams=teams,
+        )
+        agent_name = split_request.agent
+
+        # Apply team profile colors if agent is in a team.
+        if team_name and profile_manager:
+            team_profile = profile_manager.get_or_create_team_profile(team_name)
+            profile_manager.save_profiles()
+            r, g, b = team_profile.color.to_rgb()
+            try:
+                import iterm2
+                await new_session.session.async_set_profile_properties(
+                    iterm2.LocalWriteOnlyProfile(
+                        values={
+                            "Tab Color": {
+                                "Red Component": r,
+                                "Green Component": g,
+                                "Blue Component": b,
+                                "Color Space": "sRGB",
+                            }
+                        }
+                    )
+                )
+                logger.debug(
+                    f"Applied team '{team_name}' color to split session {new_session.name}"
+                )
+            except Exception as e:
+                logger.warning(f"Could not apply team color to session: {e}")
+
+    # Launch AI agent CLI if agent_type specified.
+    if split_request.agent_type:
+        cli_command = AGENT_CLI_COMMANDS.get(split_request.agent_type)
+        if cli_command:
+            logger.info(
+                f"Launching {split_request.agent_type} agent in split session "
+                f"{new_session.name}: {cli_command}"
+            )
+            await new_session.execute_command(cli_command)
+        else:
+            logger.warning(f"Unknown agent type: {split_request.agent_type}")
+    elif split_request.command:
+        await new_session.execute_command(split_request.command)
+
+    if split_request.monitor:
+        await new_session.start_monitoring(update_interval=0.2)
+
+    assigned_role = None
+    if split_request.role:
+        try:
+            role_manager.assign_role(
+                session_id=new_session.id,
+                role=split_request.role,
+                role_config=split_request.role_config,
+            )
+            assigned_role = split_request.role.value
+            logger.info(
+                f"Assigned role '{assigned_role}' to split session {new_session.id}"
+            )
+        except Exception as e:
+            logger.warning(f"Could not assign role to split session: {e}")
+
+    response = SplitSessionResponse(
+        session_id=new_session.id,
+        name=new_session.name,
+        agent=agent_name,
+        persistent_id=new_session.persistent_id or "",
+        source_session_id=source_session.id,
+        direction=split_request.direction,
+        role=assigned_role,
+    )
+
+    logger.info(
+        f"Split session {source_session.id} ({split_request.direction}) -> {new_session.id}"
+    )
+    return response
+
+
+async def _start_monitoring_core(
+    session,
+    event_bus: Optional[EventBus],
+    logger,
+    *,
+    enable_event_bus: bool = True,
+    settle_delay: float = 2.0,
+) -> bool:
+    """Start monitoring on a single resolved session.
+
+    Wires up the EventBus callback (when `enable_event_bus` is true) and
+    kicks off polling on the session. Idempotent: calling on an
+    already-monitored session is a no-op (returns True).
+
+    Args:
+        session: The resolved ItermSession to monitor.
+        event_bus: EventBus to route output to. If None (or if
+            enable_event_bus is False), monitoring still starts but no
+            callback is attached — output is not published to the bus.
+        logger: Logger for debug/info/error messages.
+        enable_event_bus: Whether to attach a callback that routes output to
+            the EventBus (for pattern subscriptions). Default True. Silently
+            skipped when event_bus is None.
+        settle_delay: Seconds to wait after starting before verifying state.
+
+    Returns:
+        True when monitoring is active on the session, False if start failed.
+    """
+    if session.is_monitoring:
+        return True
+
+    if enable_event_bus and event_bus is not None:
+        async def event_bus_callback(output: str) -> None:
+            """Route terminal output to EventBus for pattern matching."""
+            try:
+                triggered = await event_bus.process_terminal_output(
+                    session_id=session.id,
+                    output=output,
+                )
+                if triggered:
+                    logger.debug(f"Pattern subscriptions triggered: {triggered}")
+
+                await event_bus.trigger(
+                    event_name="terminal_output",
+                    payload={
+                        "session_id": session.id,
+                        "session_name": session.name,
+                        "output": output,
+                        "timestamp": time.time(),
+                    },
+                    source=f"session:{session.name}",
+                )
+            except Exception as e:
+                logger.error(f"Error in event bus callback: {e}")
+
+        if hasattr(session, "_event_bus_callback") and session._event_bus_callback:
+            session.remove_monitor_callback(session._event_bus_callback)
+            logger.debug(
+                f"Removed existing event bus callback for session: {session.name}"
+            )
+
+        session.add_monitor_callback(event_bus_callback)
+        session._event_bus_callback = event_bus_callback
+
+    await session.start_monitoring(update_interval=0.2)
+    if settle_delay > 0:
+        await asyncio.sleep(settle_delay)
+
+    return bool(session.is_monitoring)
+
+
+async def _stop_monitoring_core(session, logger) -> bool:
+    """Stop monitoring on a single resolved session.
+
+    Detaches any previously-attached EventBus callback and stops the session's
+    polling task. Idempotent: returns False if the session was not monitored.
+
+    Returns:
+        True if monitoring was active and was stopped, False otherwise.
+    """
+    if not session.is_monitoring:
+        return False
+
+    if hasattr(session, "_event_bus_callback") and session._event_bus_callback:
+        session.remove_monitor_callback(session._event_bus_callback)
+        session._event_bus_callback = None
+
+    await session.stop_monitoring()
+    logger.info(f"Stopped monitoring for session: {session.name}")
+    return True
+
+
+async def _apply_session_modification(
+    session: ItermSession,
+    modification: SessionModification,
+    terminal: ItermTerminal,
+    agent_registry: AgentRegistry,
+    logger: logging.Logger,
+    focus_cooldown: Optional[FocusCooldownManager] = None,
+) -> ModificationResult:
+    """Apply modification settings to a single session.
+
+    Handles appearance (colors, badge), state (active/focus) and process
+    control (suspend/resume). Returns a ModificationResult describing the
+    applied changes or any error encountered.
+    """
+    agent = agent_registry.get_agent_by_session(session.id)
+    agent_name = agent.name if agent else None
+    result = ModificationResult(
+        session_id=session.id,
+        session_name=session.name,
+        agent=agent_name,
+    )
+    changes = []
+
+    try:
+        # Handle set_active.
+        if modification.set_active:
+            agent_registry.active_session = session.id
+            changes.append("set_active")
+
+        # Handle suspend/resume (with toggle fallback if both are set).
+        if modification.suspend and modification.resume:
+            if session.is_suspended:
+                try:
+                    await session.resume()
+                    changes.append("toggle->resume")
+                    logger.info(f"Toggled session {session.name}: resumed (was suspended)")
+                except RuntimeError as e:
+                    result.error = str(e)
+                    logger.warning(f"Could not resume session {session.name}: {e}")
+                    return result
+            else:
+                suspend_agent = modification.suspend_by or agent_name
+                try:
+                    await session.suspend(agent=suspend_agent)
+                    changes.append(f"toggle->suspend (by {suspend_agent or 'unknown'})")
+                    logger.info(f"Toggled session {session.name}: suspended (was running)")
+                except RuntimeError as e:
+                    result.error = str(e)
+                    logger.warning(f"Could not suspend session {session.name}: {e}")
+                    return result
+        elif modification.suspend:
+            suspend_agent = modification.suspend_by or agent_name
+            try:
+                await session.suspend(agent=suspend_agent)
+                changes.append(f"suspend (by {suspend_agent or 'unknown'})")
+                logger.info(f"Suspended session {session.name} by agent {suspend_agent}")
+            except RuntimeError as e:
+                result.error = str(e)
+                logger.warning(f"Could not suspend session {session.name}: {e}")
+                return result
+        elif modification.resume:
+            try:
+                await session.resume()
+                changes.append("resume")
+                logger.info(f"Resumed session {session.name}")
+            except RuntimeError as e:
+                result.error = str(e)
+                logger.warning(f"Could not resume session {session.name}: {e}")
+                return result
+
+        # Handle focus with cooldown check.
+        if modification.focus:
+            if focus_cooldown:
+                allowed, blocking_agent, remaining = focus_cooldown.check_cooldown(
+                    session.id, agent_name
+                )
+                if not allowed:
+                    result.error = (
+                        f"Focus cooldown active: {remaining:.1f}s remaining. "
+                        f"Last focus by agent '{blocking_agent or 'unknown'}'. "
+                        f"Wait or use the same agent."
+                    )
+                    logger.warning(
+                        f"Focus blocked for {session.name}: cooldown {remaining:.1f}s"
+                    )
+                    return result
+
+            await terminal.focus_session(session.id)
+            changes.append("focus")
+
+            if focus_cooldown:
+                focus_cooldown.record_focus(session.id, agent_name)
+                logger.debug(f"Recorded focus event for {session.name} by {agent_name}")
+
+        # Reset colors first if requested.
+        if modification.reset:
+            await session.reset_colors()
+            changes.append("reset_colors")
+
+        # Apply background color.
+        if modification.background_color:
+            c = modification.background_color
+            await session.set_background_color(c.red, c.green, c.blue, c.alpha)
+            changes.append(f"background_color=RGB({c.red},{c.green},{c.blue})")
+
+        # Apply tab color.
+        if modification.tab_color:
+            c = modification.tab_color
+            enabled = modification.tab_color_enabled if modification.tab_color_enabled is not None else True
+            await session.set_tab_color(c.red, c.green, c.blue, enabled)
+            changes.append(f"tab_color=RGB({c.red},{c.green},{c.blue})")
+        elif modification.tab_color_enabled is not None:
+            await session.set_tab_color_enabled(modification.tab_color_enabled)
+            changes.append(f"tab_color_enabled={modification.tab_color_enabled}")
+
+        # Apply cursor color.
+        if modification.cursor_color:
+            c = modification.cursor_color
+            await session.set_cursor_color(c.red, c.green, c.blue)
+            changes.append(f"cursor_color=RGB({c.red},{c.green},{c.blue})")
+
+        # Apply badge.
+        if modification.badge is not None:
+            await session.set_badge(modification.badge)
+            changes.append(f"badge='{modification.badge}'")
+
+        result.success = True
+        result.changes = changes
+        logger.info(f"Applied modifications to {session.name}: {', '.join(changes)}")
+
+    except Exception as e:
+        result.error = str(e)
+        logger.error(f"Error applying modifications to {session.name}: {e}")
+
+    return result
 
 
 # Parameters that _list_sessions_core accepts. Anything outside this set is
@@ -520,8 +1166,7 @@ class SessionsDispatcher(MethodDispatcher):
           - target='active' + focus=True → terminal.focus_session(session_id)
             (fast-path preserved for back-compat with Task 4d tests).
           - target='appearance' or target=None with any appearance/process
-            modification fields → delegates to `_apply_session_modification`
-            from `iterm_mcpy.tools.modifications`.
+            modification fields → delegates to `_apply_session_modification`.
         """
         session_id = params.get("session_id")
         if not session_id:
@@ -571,10 +1216,7 @@ class SessionsDispatcher(MethodDispatcher):
                 "patch session: no modification fields provided"
             )
 
-        # Otherwise delegate to the legacy _apply_session_modification helper.
-        from core.models import SessionModification
-        from iterm_mcpy.tools.modifications import _apply_session_modification
-
+        # Otherwise delegate to the module-local _apply_session_modification.
         agent_registry = lifespan["agent_registry"]
         focus_cooldown = lifespan.get("focus_cooldown")
         logger = lifespan["logger"]
@@ -605,8 +1247,6 @@ class SessionsDispatcher(MethodDispatcher):
 
     async def _patch_roles(self, ctx, definer, **params):
         """PATCH /sessions/{id}/roles — assign a role."""
-        from core.models import SessionRole
-
         session_id = params.get("session_id")
         role = params.get("role")
         if not session_id:
@@ -757,11 +1397,8 @@ class SessionsDispatcher(MethodDispatcher):
     async def _create_split(self, ctx, **params):
         """POST /sessions/{id}/splits (CREATE) — split a pane.
 
-        Replaces the legacy ``split_session`` tool. Delegates to the shared
-        ``_split_session_core`` helper in ``iterm_mcpy.tools.sessions``.
+        Delegates to the module-local ``_split_session_core`` helper.
         """
-        from core.models import SplitSessionRequest
-
         session_id = params.get("session_id")
         if not session_id:
             raise ValueError("create split requires session_id")

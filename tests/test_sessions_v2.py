@@ -842,9 +842,9 @@ class TestPatchAppearance(unittest.TestCase):
         async def go():
             from iterm_mcpy.tools import sessions_v2 as mod
             with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[session])):
-                from iterm_mcpy.tools import modifications
+                from iterm_mcpy.tools import sessions_v2 as mod_mod
                 with patch.object(
-                    modifications,
+                    mod_mod,
                     "_apply_session_modification",
                     new=AsyncMock(return_value=fake_result),
                 ) as mock_apply:
@@ -879,9 +879,9 @@ class TestPatchAppearance(unittest.TestCase):
         async def go():
             from iterm_mcpy.tools import sessions_v2 as mod
             with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[session])):
-                from iterm_mcpy.tools import modifications
+                from iterm_mcpy.tools import sessions_v2 as mod_mod
                 with patch.object(
-                    modifications,
+                    mod_mod,
                     "_apply_session_modification",
                     new=AsyncMock(return_value=ModificationResult(
                         session_id="sid", session_name="s1", success=True,

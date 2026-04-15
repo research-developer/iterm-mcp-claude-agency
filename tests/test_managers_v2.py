@@ -256,7 +256,7 @@ class TestCreateManager(unittest.TestCase):
         registry.create_manager.return_value = created
 
         # Patch _setup_manager_callbacks to isolate from real callback wiring.
-        with patch("iterm_mcpy.tools.managers._setup_manager_callbacks") as mock_setup:
+        with patch("iterm_mcpy.tools._callbacks._setup_manager_callbacks") as mock_setup:
             parsed = json.loads(asyncio.run(managers_v2(
                 ctx=_make_ctx(manager_registry=registry),
                 op="create",
@@ -280,7 +280,7 @@ class TestCreateManager(unittest.TestCase):
         registry.create_manager.return_value = _fake_manager(
             name="m1", workers=[], strategy_value="role_based"
         )
-        with patch("iterm_mcpy.tools.managers._setup_manager_callbacks"):
+        with patch("iterm_mcpy.tools._callbacks._setup_manager_callbacks"):
             parsed = json.loads(asyncio.run(managers_v2(
                 ctx=_make_ctx(manager_registry=registry),
                 op="POST",
@@ -305,7 +305,7 @@ class TestCreateManager(unittest.TestCase):
             workers=["builder-1", "tester-1"],
             strategy_value="round_robin",
         )
-        with patch("iterm_mcpy.tools.managers._setup_manager_callbacks"):
+        with patch("iterm_mcpy.tools._callbacks._setup_manager_callbacks"):
             parsed = json.loads(asyncio.run(managers_v2(
                 ctx=_make_ctx(manager_registry=registry),
                 op="create",

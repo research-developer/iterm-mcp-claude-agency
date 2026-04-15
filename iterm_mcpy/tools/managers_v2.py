@@ -195,9 +195,9 @@ class ManagersDispatcher(MethodDispatcher):
             metadata=metadata,
         )
 
-        # Set up execution callbacks. The legacy helper wires the manager's
+        # Set up execution callbacks. The shared helper wires the manager's
         # ``_execute_callback`` to drive workers through the terminal.
-        from iterm_mcpy.tools.managers import _setup_manager_callbacks
+        from iterm_mcpy.tools._callbacks import _setup_manager_callbacks
         _setup_manager_callbacks(manager, terminal, agent_registry, logger)
 
         logger.info(

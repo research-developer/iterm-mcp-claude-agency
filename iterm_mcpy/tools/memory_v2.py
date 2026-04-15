@@ -18,14 +18,59 @@ Registered under the provisional name ``memory_v2`` to coexist with the
 legacy ``manage_memory`` tool; the cutover (rename to ``memory`` and
 unregister the legacy tool) happens at the end of SP2.
 
-The core validators ``_validate_namespace`` and ``_validate_key`` are
-reused from the legacy module to preserve safe-character enforcement.
+The module-local validators ``_validate_namespace`` and ``_validate_key``
+enforce safe-character conventions on namespace parts and keys before
+hitting the memory store.
 """
+import re
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import Context
 
 from iterm_mcpy.dispatcher import MethodDispatcher
+
+
+# Pattern for safe namespace and key characters.
+# Allows alphanumeric, underscore, hyphen, and dot.
+_SAFE_MEMORY_PATTERN = re.compile(r'^[a-zA-Z0-9_\-\.]+$')
+
+
+def _validate_namespace(namespace: List[str]) -> None:
+    """Validate namespace parts contain only safe characters.
+
+    Args:
+        namespace: List of namespace parts
+
+    Raises:
+        ValueError: If any part contains invalid characters
+    """
+    if not namespace:
+        return  # Empty namespace is valid (root)
+
+    for part in namespace:
+        if not part:
+            raise ValueError("Namespace parts cannot be empty strings")
+        if not _SAFE_MEMORY_PATTERN.match(part):
+            raise ValueError(
+                f"Invalid namespace part '{part}': only alphanumeric, underscore, hyphen, and dot allowed"
+            )
+
+
+def _validate_key(key: str) -> None:
+    """Validate key contains only safe characters.
+
+    Args:
+        key: The memory key
+
+    Raises:
+        ValueError: If key contains invalid characters
+    """
+    if not key:
+        raise ValueError("Key cannot be empty")
+    if not _SAFE_MEMORY_PATTERN.match(key):
+        raise ValueError(
+            f"Invalid key '{key}': only alphanumeric, underscore, hyphen, and dot allowed"
+        )
 
 
 class MemoryDispatcher(MethodDispatcher):
@@ -110,8 +155,6 @@ class MemoryDispatcher(MethodDispatcher):
 
     async def _retrieve(self, ctx, **params):
         """GET /memory — retrieve a memory by namespace + key."""
-        from iterm_mcpy.tools.memory import _validate_key, _validate_namespace
-
         namespace = params.get("namespace")
         key = params.get("key")
         if not namespace:
@@ -147,8 +190,6 @@ class MemoryDispatcher(MethodDispatcher):
 
     async def _search(self, ctx, **params):
         """GET /memory?target=search — full-text search within a namespace."""
-        from iterm_mcpy.tools.memory import _validate_namespace
-
         namespace = params.get("namespace")
         query = params.get("query")
         limit = params.get("limit", 10)
@@ -188,8 +229,6 @@ class MemoryDispatcher(MethodDispatcher):
 
     async def _list_keys(self, ctx, **params):
         """GET /memory?target=keys — list all keys in a namespace."""
-        from iterm_mcpy.tools.memory import _validate_namespace
-
         namespace = params.get("namespace")
         if not namespace:
             raise ValueError("list_keys requires namespace")
@@ -208,8 +247,6 @@ class MemoryDispatcher(MethodDispatcher):
 
     async def _list_namespaces(self, ctx, **params):
         """GET /memory?target=namespaces — list namespaces (optional prefix)."""
-        from iterm_mcpy.tools.memory import _validate_namespace
-
         namespace = params.get("namespace")
         if namespace:
             _validate_namespace(namespace)
@@ -251,8 +288,6 @@ class MemoryDispatcher(MethodDispatcher):
 
     async def _store(self, ctx, **params):
         """POST /memory (CREATE) — store a value at namespace/key."""
-        from iterm_mcpy.tools.memory import _validate_key, _validate_namespace
-
         namespace = params.get("namespace")
         key = params.get("key")
         value = params.get("value")
@@ -292,8 +327,6 @@ class MemoryDispatcher(MethodDispatcher):
 
     async def _delete_key(self, ctx, **params):
         """DELETE /memory/{namespace}/{key} — delete a single memory."""
-        from iterm_mcpy.tools.memory import _validate_key, _validate_namespace
-
         namespace = params.get("namespace")
         key = params.get("key")
         if not namespace:
@@ -326,8 +359,6 @@ class MemoryDispatcher(MethodDispatcher):
 
     async def _clear_namespace(self, ctx, **params):
         """DELETE /memory?target=namespace — clear an entire namespace."""
-        from iterm_mcpy.tools.memory import _validate_namespace
-
         namespace = params.get("namespace")
         confirm = params.get("confirm", False)
         if not namespace:

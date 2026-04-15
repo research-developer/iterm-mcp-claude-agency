@@ -29,7 +29,7 @@ from core.models import (
     TaskResultResponse,
 )
 from iterm_mcpy.responses import err_envelope, ok_envelope
-from iterm_mcpy.tools.managers import _setup_manager_callbacks
+from iterm_mcpy.tools._callbacks import _setup_manager_callbacks
 
 
 async def _delegate_task(
