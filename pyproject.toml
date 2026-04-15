@@ -44,7 +44,7 @@ iterm-mcp-fastmcp = "iterm_mcpy.fastmcp_server:main"
 
 [tool.setuptools]
 package-dir = {"" = "."}
-packages = ["core", "iterm_mcpy", "utils"]
+packages = ["core", "iterm_mcpy", "iterm_mcpy.tools", "utils"]
 
 [tool.black]
 line-length = 88

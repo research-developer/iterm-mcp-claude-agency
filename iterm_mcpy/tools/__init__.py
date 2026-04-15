@@ -1,0 +1,42 @@
+"""iTerm MCP tool modules.
+
+Each module contains tool functions for a specific domain and exposes
+a register(mcp) function that registers them with the FastMCP instance.
+"""
+
+
+def register_all(mcp):
+    """Register all tool modules with the FastMCP instance.
+
+    Called from fastmcp_server.py after mcp creation and before run().
+    """
+    from . import (
+        memory,
+        agent_hooks,
+        telemetry,
+        workflows,
+        services,
+        roles,
+        notifications,
+        wait,
+        feedback,
+        managers,
+        agents,
+        control,
+        monitoring,
+        modifications,
+        orchestration,
+        commands,
+        sessions,
+    )
+
+    _MODULES = [
+        memory, agent_hooks, telemetry, workflows,
+        services, roles, notifications, wait,
+        feedback, managers, agents, control,
+        monitoring, modifications, orchestration,
+        commands, sessions,
+    ]
+
+    for mod in _MODULES:
+        mod.register(mcp)

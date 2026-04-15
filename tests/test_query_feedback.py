@@ -37,7 +37,7 @@ from core.feedback import (  # noqa: E402  (path mutated above)
     FeedbackStatus,
     FeedbackTriggerType,
 )
-from iterm_mcpy.fastmcp_server import query_feedback  # noqa: E402
+from iterm_mcpy.tools.feedback import query_feedback  # noqa: E402
 
 
 def _make_entry() -> FeedbackEntry:

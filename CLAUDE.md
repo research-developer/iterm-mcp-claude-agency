@@ -116,28 +116,54 @@ We've successfully implemented a Python-based iTerm2 controller with advanced fe
 ```
 iterm-mcp/
 ├── pyproject.toml                # Python packaging configuration
-├── __init__.py                   # Root package initialization
+├── .mcp.json                     # Claude Code plugin manifest
+├── skills/                       # Discovery skills for the plugin
+│   ├── session-management/SKILL.md
+│   ├── agent-orchestration/SKILL.md
+│   └── feedback-workflow/SKILL.md
 ├── tests/                        # Test suite
-│   ├── __init__.py
-│   ├── test_basic_functionality.py  # Basic feature tests
-│   └── test_advanced_features.py    # Advanced feature tests
-│   └── test_line_limits.py          # Line limit tests
-│   └── test_logging.py              # Logging tests
-│   └── test_persistent_session.py   # Persistent session tests
-├── core/                         # Core functionality
-│   ├── __init__.py
-│   ├── session.py                # iTerm session management
-│   ├── terminal.py               # Terminal window/tab management
-│   └── layouts.py                # Predefined layouts
-├── server/                       # Server implementations
-│   ├── __init__.py
-│   ├── main.py                   # Entry point with option selection
-│   ├── mcp_server.py             # Legacy MCP server implementation
-│   └── fastmcp_server.py         # FastMCP implementation
+│   ├── test_responses.py         # ok_json serialization tests
+│   └── ... (integration tests)
+├── core/                         # Core domain logic (models, managers, registries)
+│   ├── session.py                # iTerm session wrapper
+│   ├── terminal.py               # Terminal controller
+│   ├── layouts.py                # Predefined layouts
+│   ├── agents.py                 # Agent registry
+│   ├── models.py                 # Pydantic request/response models
+│   └── ... (26+ modules)
+├── iterm_mcpy/                   # MCP server package
+│   ├── fastmcp_server.py         # Slim server: lifespan, resources, prompts, register_all()
+│   ├── helpers.py                # Shared helpers (resolve_session, execute_*)
+│   ├── responses.py              # ok_json() — token-efficient serialization
+│   └── tools/                    # Tool modules split by domain (17 modules, 52 tools)
+│       ├── __init__.py           # register_all(mcp) composes all modules
+│       ├── sessions.py           # list/create/split/tag/lock sessions (7 tools)
+│       ├── commands.py           # read/write/cascade/hierarchical (5 tools)
+│       ├── agents.py             # register/list/remove agents, teams (4 tools)
+│       ├── roles.py              # role-based access control (7 tools)
+│       ├── feedback.py           # submit/query/fork/triage (7 tools)
+│       ├── managers.py           # hierarchical delegation (3 tools)
+│       ├── notifications.py      # get/notify/summary (3 tools)
+│       ├── control.py            # send_control_character/special_key/status (3 tools)
+│       ├── monitoring.py         # start/stop monitoring (2 tools)
+│       ├── modifications.py      # modify_sessions (1 tool)
+│       ├── orchestration.py      # orchestrate_playbook (1 tool)
+│       ├── wait.py               # wait_for_agent (1 tool)
+│       ├── memory.py             # manage_memory (1 tool)
+│       ├── services.py           # manage_services (1 tool)
+│       ├── agent_hooks.py        # manage_agent_hooks (1 tool)
+│       ├── workflows.py          # event bus / workflows (4 tools)
+│       └── telemetry.py          # start_telemetry_dashboard (1 tool)
 └── utils/                        # Utility functions
-    ├── __init__.py
     └── logging.py                # Logging and monitoring utilities
 ```
+
+Each tool module:
+- Defines tool functions (without `@mcp.tool()` decorators)
+- Exposes a `register(mcp)` function that registers them with the FastMCP instance
+- Imports shared helpers from `iterm_mcpy.helpers` and `iterm_mcpy.responses`
+
+All response serialization goes through `ok_json()` in `iterm_mcpy/responses.py`, which applies `exclude_none=True` to drop null fields and save ~35% of response tokens.
 
 ### Branches
 - `applescript-implementation`: Contains the original AppleScript-based code
