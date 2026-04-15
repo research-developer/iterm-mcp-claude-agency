@@ -1,4 +1,4 @@
-"""SP2 method-semantic `sessions_v2` tool — Tasks 4a + 4b + 4c.
+"""SP2 method-semantic `sessions_v2` tool — Tasks 4a + 4b + 4c + 4d.
 
 This module introduces the first collection tool built on the
 MethodDispatcher base class. It currently implements:
@@ -13,10 +13,17 @@ MethodDispatcher base class. It currently implements:
               (delegates to execute_write_request)
               OR send control char / special key when target="keys"
               (unifies old send_control_character / send_special_key)
+    PATCH   — update sub-resources: tags (MODIFY replaces, APPEND adds),
+              roles (assign), locks (acquire / request access), or the
+              session itself (target='active' + focus=true). Replaces
+              set_session_tags, assign_session_role, manage_session_lock
+              (lock / request_access), and set_active_session.
+    DELETE  — remove sub-resources: roles (removes assignment) or locks
+              (releases the lock). Replaces remove_session_role and
+              manage_session_lock (unlock).
 
-Remaining sub-resources (tags, locks, roles, monitoring, splits, status)
-and the remaining POST/PATCH/PUT/DELETE definers are implemented in
-subsequent SP2 tasks (4d–4e).
+Remaining sub-resources (monitoring, splits, status) and the remaining
+POST/PUT definers are implemented in subsequent SP2 tasks (4e).
 
 The tool is registered under the provisional name ``sessions_v2`` so it
 coexists with the 17 legacy session-related tools. The final cutover
@@ -104,11 +111,52 @@ class SessionsDispatcher(MethodDispatcher):
                 },
             },
         },
+        "PATCH": {
+            "definers": {
+                "MODIFY": {
+                    "aliases": ["update", "patch", "assign"],
+                    "params": [
+                        "target='tags' | 'roles' | 'locks' | 'active' (default)",
+                        "session_id",
+                        # tags:
+                        "tags?=[...]",
+                        # roles:
+                        "role?", "assigned_by?",
+                        # locks:
+                        "agent?", "action?='lock'|'request_access'",
+                        # active:
+                        "focus?=true",
+                    ],
+                    "description": "Update session fields or sub-resources.",
+                },
+                "APPEND": {
+                    "aliases": ["append"],
+                    "params": [
+                        "target='tags'",
+                        "session_id",
+                        "tags=[...]",
+                    ],
+                    "description": "Append to session tags (vs MODIFY which replaces).",
+                },
+            },
+        },
+        "DELETE": {
+            "aliases": ["remove", "unlock"],
+            "params": [
+                "target='roles' | 'locks'",
+                "session_id",
+                # locks:
+                "agent?",
+                # roles:
+                "removed_by?",
+            ],
+            "description": "Remove role assignment or release a session lock.",
+        },
         "HEAD": {"compact_fields": ["session_id", "name", "agent", "is_processing", "locked"]},
         "OPTIONS": {"description": "Return this schema."},
     }
 
-    sub_resources = ["output", "status", "tags", "locks", "roles", "monitoring", "splits", "keys"]
+    sub_resources = ["output", "status", "tags", "locks", "roles", "monitoring", "splits", "keys", "active"]
 
     async def on_get(self, ctx, **params):
         """Route GET by `target` — list sessions (default) or read output."""
@@ -333,6 +381,164 @@ class SessionsDispatcher(MethodDispatcher):
 
         return {"sent": results, "count": len(results)}
 
+    # ---------------------- PATCH / DELETE (Task 4d) ---------------------- #
+
+    async def on_patch(self, ctx, definer, **params):
+        """Route PATCH by `target` — tags, roles, locks, or the session itself."""
+        target = params.get("target")
+
+        if target == "tags":
+            return await self._patch_tags(ctx, definer, **params)
+
+        if target == "roles":
+            return await self._patch_roles(ctx, definer, **params)
+
+        if target == "locks":
+            return await self._patch_locks(ctx, definer, **params)
+
+        if target == "active" or target is None:
+            # PATCH on the session itself (e.g., set active/focus).
+            return await self._patch_session(ctx, definer, **params)
+
+        raise NotImplementedError(f"PATCH target={target!r} not yet implemented")
+
+    async def on_delete(self, ctx, **params):
+        """Route DELETE by `target` — roles or locks (no whole-session DELETE yet)."""
+        target = params.get("target")
+
+        if target == "roles":
+            return await self._delete_role(ctx, **params)
+
+        if target == "locks":
+            return await self._delete_lock(ctx, **params)
+
+        # DELETE on the session itself is NOT supported in SP2 (there was no
+        # legacy remove_session tool). Reserved for a future task.
+        raise NotImplementedError(f"DELETE target={target!r} not yet implemented")
+
+    async def _patch_tags(self, ctx, definer, **params):
+        """PATCH /sessions/{id}/tags. MODIFY replaces, APPEND adds."""
+        session_id = params.get("session_id")
+        if not session_id:
+            raise ValueError("patch tags requires session_id")
+
+        tags = params.get("tags")
+        if tags is None:
+            raise ValueError("patch tags requires tags=[...]")
+
+        lock_manager = ctx.request_context.lifespan_context.get("tag_lock_manager")
+        if not lock_manager:
+            raise RuntimeError("tag_lock_manager not available")
+
+        # MODIFY → replace (append=False). APPEND → append=True.
+        append = (definer == "APPEND")
+        updated = lock_manager.set_tags(session_id, tags, append=append)
+        return {"session_id": session_id, "tags": updated, "appended": append}
+
+    async def _patch_session(self, ctx, definer, **params):
+        """PATCH on a session — e.g., focus/activate."""
+        session_id = params.get("session_id")
+        if not session_id:
+            raise ValueError("patch session requires session_id")
+
+        focus = params.get("focus")
+        if focus is not True:
+            # Only thing supported in 4d is setting active/focus. Everything
+            # else (appearance, monitoring) is reserved for later tasks.
+            raise NotImplementedError(
+                "patch session: only focus=true supported in this task"
+            )
+
+        lifespan = ctx.request_context.lifespan_context
+        terminal = lifespan["terminal"]
+        await terminal.focus_session(session_id)
+        return {"session_id": session_id, "focused": True}
+
+    async def _patch_roles(self, ctx, definer, **params):
+        """PATCH /sessions/{id}/roles — assign a role."""
+        session_id = params.get("session_id")
+        role = params.get("role")
+        if not session_id:
+            raise ValueError("patch roles requires session_id")
+        if not role:
+            raise ValueError("patch roles requires role")
+
+        role_manager = ctx.request_context.lifespan_context.get("role_manager")
+        if not role_manager:
+            raise RuntimeError("role_manager not available")
+
+        assigned_by = params.get("assigned_by")
+        role_manager.assign_role(session_id, role, assigned_by=assigned_by)
+        return {"session_id": session_id, "role": role}
+
+    async def _delete_role(self, ctx, **params):
+        """DELETE /sessions/{id}/roles — remove role assignment."""
+        session_id = params.get("session_id")
+        if not session_id:
+            raise ValueError("delete roles requires session_id")
+
+        role_manager = ctx.request_context.lifespan_context.get("role_manager")
+        if not role_manager:
+            raise RuntimeError("role_manager not available")
+
+        removed_by = params.get("removed_by")
+        role_manager.remove_role(session_id, removed_by=removed_by)
+        return {"session_id": session_id, "removed": True}
+
+    async def _patch_locks(self, ctx, definer, **params):
+        """PATCH /sessions/{id}/locks — acquire a lock or request access."""
+        session_id = params.get("session_id")
+        agent = params.get("agent")
+        if not session_id:
+            raise ValueError("patch locks requires session_id")
+        if not agent:
+            raise ValueError("patch locks requires agent")
+
+        lock_manager = ctx.request_context.lifespan_context.get("tag_lock_manager")
+        if not lock_manager:
+            raise RuntimeError("tag_lock_manager not available")
+
+        action = params.get("action", "lock")  # "lock" or "request_access"
+
+        if action == "lock":
+            acquired, owner = lock_manager.lock_session(session_id, agent)
+            return {
+                "session_id": session_id,
+                "agent": agent,
+                "acquired": acquired,
+                "owner": owner,
+            }
+
+        if action == "request_access":
+            allowed, owner = lock_manager.check_permission(session_id, agent)
+            return {
+                "session_id": session_id,
+                "agent": agent,
+                "allowed": allowed,
+                "owner": owner,
+            }
+
+        raise ValueError(
+            f"patch locks: unknown action={action!r} "
+            "(expected 'lock' or 'request_access')"
+        )
+
+    async def _delete_lock(self, ctx, **params):
+        """DELETE /sessions/{id}/locks — release lock."""
+        session_id = params.get("session_id")
+        agent = params.get("agent")
+        if not session_id:
+            raise ValueError("delete locks requires session_id")
+        if not agent:
+            raise ValueError("delete locks requires agent")
+
+        lock_manager = ctx.request_context.lifespan_context.get("tag_lock_manager")
+        if not lock_manager:
+            raise RuntimeError("tag_lock_manager not available")
+
+        success = lock_manager.unlock_session(session_id, agent)
+        return {"session_id": session_id, "agent": agent, "unlocked": success}
+
 
 _dispatcher = SessionsDispatcher()
 
@@ -377,14 +583,29 @@ async def sessions_v2(
     # NEW for 4c: keys sub-resource.
     control_char: Optional[str] = None,
     key: Optional[str] = None,
+    # NEW for 4d: tags/roles/locks/active sub-resources. Note that `role` is
+    # already in the signature as a GET filter (Task 4a); the same slot is
+    # reused here for PATCH input.
+    assigned_by: Optional[str] = None,
+    removed_by: Optional[str] = None,
+    action: Optional[str] = None,       # "lock" | "request_access" for locks
+    focus: Optional[bool] = None,       # for target="active"
 ) -> str:
-    """Session operations: list, read output, write output, send keys, create, HEAD, OPTIONS.
+    """Session operations: list, read, write, send keys, create, patch, delete, HEAD, OPTIONS.
 
     Use op="list" or op="GET" to list sessions with filters.
     Use op="GET" + target="output" to read terminal output.
     Use op="send" (or op="POST" + definer="SEND") + target="output" to write.
     Use op="send" + target="keys" + control_char=... | key=... to send control
       characters or named special keys to session(s).
+    Use op="update" (or op="PATCH") + target="tags" to replace tags,
+      op="append" + target="tags" to add tags.
+    Use op="assign" (or op="PATCH") + target="roles" + role=... to assign a role.
+    Use op="update" + target="locks" + agent=... + action="lock"|"request_access"
+      to acquire a lock or request access.
+    Use op="update" + target="active" + focus=true + session_id=... to focus.
+    Use op="delete" (or op="DELETE") + target="roles" to remove a role.
+    Use op="unlock" (or op="DELETE") + target="locks" + agent=... to release a lock.
     Use op="HEAD" (or "peek"/"summary") for a compact list.
     Use op="OPTIONS" (or "schema"/"discover") to discover the tool's surface.
     Use op="create" (or op="POST") to create new sessions from a layout.
@@ -428,6 +649,10 @@ async def sessions_v2(
         "use_encoding": use_encoding,
         "control_char": control_char,
         "key": key,
+        "assigned_by": assigned_by,
+        "removed_by": removed_by,
+        "action": action,
+        "focus": focus,
     }
     params = {k: v for k, v in raw_params.items() if v is not None}
 

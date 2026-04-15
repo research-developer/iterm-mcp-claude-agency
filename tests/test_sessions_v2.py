@@ -1,4 +1,4 @@
-"""Tests for sessions_v2 dispatcher (SP2 Tasks 4a + 4b)."""
+"""Tests for sessions_v2 dispatcher (SP2 Tasks 4a + 4b + 4c + 4d)."""
 import asyncio
 import json
 import unittest
@@ -8,7 +8,12 @@ from iterm_mcpy.tools.sessions_v2 import SessionsDispatcher, sessions_v2
 
 
 def _make_ctx(terminal=None, agent_registry=None, lock_manager=None, logger=None, **extra):
-    """Build a fake MCP Context with the lifespan context filled in."""
+    """Build a fake MCP Context with the lifespan context filled in.
+
+    `**extra` keys (e.g., `role_manager`, `notification_manager`,
+    `focus_cooldown`) go straight into `lifespan_context` so tests can inject
+    whichever managers they need.
+    """
     ctx = MagicMock()
     ctx.request_context.lifespan_context = {
         "terminal": terminal or MagicMock(),
@@ -378,6 +383,191 @@ class TestSendKeys(unittest.TestCase):
         parsed = json.loads(asyncio.run(go()))
         self.assertFalse(parsed["ok"])
         self.assertIn("no matching session", parsed["error"].lower())
+
+
+# ========================================================================= #
+# Task 4d — PATCH/DELETE on tags, roles, locks, and active session.         #
+# ========================================================================= #
+
+
+class TestPatchTags(unittest.TestCase):
+    def test_patch_tags_replaces(self):
+        lock_manager = MagicMock()
+        lock_manager.set_tags.return_value = ["x", "y"]
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=lock_manager),
+            op="update", target="tags", session_id="sid", tags=["x", "y"],
+        )))
+        self.assertEqual(parsed["method"], "PATCH")
+        self.assertEqual(parsed["definer"], "MODIFY")
+        self.assertTrue(parsed["ok"])
+        lock_manager.set_tags.assert_called_once_with("sid", ["x", "y"], append=False)
+
+    def test_patch_tags_append(self):
+        lock_manager = MagicMock()
+        lock_manager.set_tags.return_value = ["a", "b", "x"]
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=lock_manager),
+            op="append", target="tags", session_id="sid", tags=["x"],
+        )))
+        self.assertEqual(parsed["definer"], "APPEND")
+        self.assertTrue(parsed["ok"])
+        lock_manager.set_tags.assert_called_once_with("sid", ["x"], append=True)
+
+    def test_patch_tags_missing_session_id(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=MagicMock()),
+            op="update", target="tags", tags=["x"],
+        )))
+        self.assertFalse(parsed["ok"])
+
+    def test_patch_tags_missing_tags(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=MagicMock()),
+            op="update", target="tags", session_id="sid",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("tags", parsed["error"].lower())
+
+
+class TestPatchActive(unittest.TestCase):
+    def test_focus_session(self):
+        terminal = MagicMock()
+        terminal.focus_session = AsyncMock()
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(terminal=terminal),
+            op="update", target="active", session_id="sid", focus=True,
+        )))
+        self.assertEqual(parsed["method"], "PATCH")
+        self.assertTrue(parsed["ok"])
+        terminal.focus_session.assert_awaited_once_with("sid")
+
+    def test_focus_without_flag_not_yet_implemented(self):
+        # Only focus=true is supported in 4d. Plain PATCH on active session
+        # without focus=true should surface NotImplemented.
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(),
+            op="update", target="active", session_id="sid",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("not implemented", parsed["error"].lower())
+
+
+class TestPatchRoles(unittest.TestCase):
+    def test_assign_role(self):
+        role_manager = MagicMock()
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(role_manager=role_manager),
+            op="assign", target="roles", session_id="sid", role="leader",
+        )))
+        self.assertEqual(parsed["method"], "PATCH")
+        self.assertTrue(parsed["ok"])
+        role_manager.assign_role.assert_called_once_with("sid", "leader", assigned_by=None)
+
+    def test_assign_role_missing_role(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(role_manager=MagicMock()),
+            op="assign", target="roles", session_id="sid",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("role", parsed["error"].lower())
+
+
+class TestDeleteRole(unittest.TestCase):
+    def test_delete_role(self):
+        role_manager = MagicMock()
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(role_manager=role_manager),
+            op="delete", target="roles", session_id="sid",
+        )))
+        self.assertEqual(parsed["method"], "DELETE")
+        self.assertTrue(parsed["ok"])
+        role_manager.remove_role.assert_called_once_with("sid", removed_by=None)
+
+
+class TestPatchLocks(unittest.TestCase):
+    def test_lock_session(self):
+        lock_manager = MagicMock()
+        lock_manager.lock_session.return_value = (True, "agent1")
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=lock_manager),
+            op="update", target="locks", session_id="sid", agent="agent1", action="lock",
+        )))
+        self.assertTrue(parsed["ok"])
+        self.assertTrue(parsed["data"]["acquired"])
+        self.assertEqual(parsed["data"]["owner"], "agent1")
+
+    def test_lock_session_default_action_is_lock(self):
+        # When `action` is omitted, it defaults to "lock".
+        lock_manager = MagicMock()
+        lock_manager.lock_session.return_value = (True, "agent1")
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=lock_manager),
+            op="update", target="locks", session_id="sid", agent="agent1",
+        )))
+        self.assertTrue(parsed["ok"])
+        lock_manager.lock_session.assert_called_once_with("sid", "agent1")
+
+    def test_request_access(self):
+        lock_manager = MagicMock()
+        lock_manager.check_permission.return_value = (True, "agent1")
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=lock_manager),
+            op="update", target="locks", session_id="sid", agent="agent1", action="request_access",
+        )))
+        self.assertTrue(parsed["ok"])
+        self.assertTrue(parsed["data"]["allowed"])
+
+    def test_patch_locks_missing_agent(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=MagicMock()),
+            op="update", target="locks", session_id="sid",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("agent", parsed["error"].lower())
+
+    def test_patch_locks_bad_action(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=MagicMock()),
+            op="update", target="locks", session_id="sid", agent="a", action="bogus",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("unknown action", parsed["error"].lower())
+
+
+class TestDeleteLock(unittest.TestCase):
+    def test_unlock(self):
+        lock_manager = MagicMock()
+        lock_manager.unlock_session.return_value = True
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=lock_manager),
+            op="unlock", target="locks", session_id="sid", agent="agent1",
+        )))
+        self.assertEqual(parsed["method"], "DELETE")
+        self.assertTrue(parsed["ok"])
+        self.assertTrue(parsed["data"]["unlocked"])
+
+    def test_delete_locks_missing_agent(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=MagicMock()),
+            op="delete", target="locks", session_id="sid",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("agent", parsed["error"].lower())
+
+
+class TestOptionsAdvertisesPatchAndDelete(unittest.TestCase):
+    def test_options_lists_patch_definers_and_delete(self):
+        parsed = json.loads(asyncio.run(sessions_v2(ctx=_make_ctx(), op="OPTIONS")))
+        methods = parsed["data"]["methods"]
+        self.assertIn("PATCH", methods)
+        self.assertIn("MODIFY", methods["PATCH"]["definers"])
+        self.assertIn("APPEND", methods["PATCH"]["definers"])
+        self.assertIn("DELETE", methods)
+        # Sub-resources should include roles/locks/tags/active.
+        subs = parsed["data"]["sub_resources"]
+        for name in ("tags", "roles", "locks", "active"):
+            self.assertIn(name, subs)
 
 
 if __name__ == "__main__":
