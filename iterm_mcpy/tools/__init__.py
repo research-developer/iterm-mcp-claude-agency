@@ -36,6 +36,7 @@ def register_all(mcp):
         memory_v2,    # SP2 method-semantic tool (coexists with legacy manage_memory).
         services_v2,  # SP2 method-semantic tool (coexists with legacy manage_services).
         roles_v2,     # SP2 method-semantic tool (coexists with legacy list_available_roles/check_tool_permission).
+        workflows_v2, # SP2 method-semantic tool (coexists with legacy trigger/list/get_history workflow tools).
     )
 
     _MODULES = [
@@ -45,7 +46,7 @@ def register_all(mcp):
         monitoring, modifications, orchestration,
         commands, sessions, sessions_v2, agents_v2,
         teams_v2, managers_v2, feedback_v2, memory_v2,
-        services_v2, roles_v2,
+        services_v2, roles_v2, workflows_v2,
     ]
 
     for mod in _MODULES:
