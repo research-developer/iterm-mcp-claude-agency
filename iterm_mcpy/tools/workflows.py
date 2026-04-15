@@ -129,16 +129,14 @@ async def list_workflow_events(ctx: Context) -> str:
         # Build detailed info for each event
         events = []
         for name in sorted(event_names):
-            listeners = await event_bus._registry.get_listeners(name)
-            router = await event_bus._registry.get_router(name)
-            start_handler = await event_bus._registry.get_start_handler(name)
+            info = await event_bus.get_event_info(name)
 
             events.append(WorkflowEventInfo(
-                event_name=name,
-                has_listeners=len(listeners) > 0,
-                has_router=router is not None,
-                is_start_event=start_handler is not None,
-                listener_count=len(listeners)
+                event_name=info["event_name"],
+                has_listeners=info["has_listeners"],
+                has_router=info["has_router"],
+                is_start_event=info["is_start_event"],
+                listener_count=info["listener_count"]
             ))
 
         # Get registered flows
