@@ -456,6 +456,8 @@ class SessionsDispatcher(MethodDispatcher):
 
     async def _patch_roles(self, ctx, definer, **params):
         """PATCH /sessions/{id}/roles — assign a role."""
+        from core.models import SessionRole
+
         session_id = params.get("session_id")
         role = params.get("role")
         if not session_id:
@@ -467,9 +469,11 @@ class SessionsDispatcher(MethodDispatcher):
         if not role_manager:
             raise RuntimeError("role_manager not available")
 
+        # Coerce raw strings to the SessionRole enum (case-insensitive match on value).
+        role_enum = role if isinstance(role, SessionRole) else SessionRole(role.lower())
         assigned_by = params.get("assigned_by")
-        role_manager.assign_role(session_id, role, assigned_by=assigned_by)
-        return {"session_id": session_id, "role": role}
+        role_manager.assign_role(session_id, role_enum, assigned_by=assigned_by)
+        return {"session_id": session_id, "role": role_enum.value}
 
     async def _delete_role(self, ctx, **params):
         """DELETE /sessions/{id}/roles — remove role assignment."""
@@ -481,9 +485,11 @@ class SessionsDispatcher(MethodDispatcher):
         if not role_manager:
             raise RuntimeError("role_manager not available")
 
-        removed_by = params.get("removed_by")
-        role_manager.remove_role(session_id, removed_by=removed_by)
-        return {"session_id": session_id, "removed": True}
+        # NOTE: core/roles.py RoleManager.remove_role only takes session_id.
+        # `removed_by` is accepted by the tool signature but not persisted;
+        # audit trail for removals can be added in a follow-up.
+        removed = role_manager.remove_role(session_id)
+        return {"session_id": session_id, "removed": bool(removed)}
 
     async def _patch_locks(self, ctx, definer, **params):
         """PATCH /sessions/{id}/locks — acquire a lock or request access."""

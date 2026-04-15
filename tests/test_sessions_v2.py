@@ -455,14 +455,18 @@ class TestPatchActive(unittest.TestCase):
 
 class TestPatchRoles(unittest.TestCase):
     def test_assign_role(self):
+        from core.models import SessionRole
         role_manager = MagicMock()
         parsed = json.loads(asyncio.run(sessions_v2(
             ctx=_make_ctx(role_manager=role_manager),
-            op="assign", target="roles", session_id="sid", role="leader",
+            op="assign", target="roles", session_id="sid", role="builder",
         )))
         self.assertEqual(parsed["method"], "PATCH")
         self.assertTrue(parsed["ok"])
-        role_manager.assign_role.assert_called_once_with("sid", "leader", assigned_by=None)
+        # Role string coerced to the SessionRole enum before calling the manager.
+        role_manager.assign_role.assert_called_once_with(
+            "sid", SessionRole.BUILDER, assigned_by=None
+        )
 
     def test_assign_role_missing_role(self):
         parsed = json.loads(asyncio.run(sessions_v2(
@@ -472,17 +476,27 @@ class TestPatchRoles(unittest.TestCase):
         self.assertFalse(parsed["ok"])
         self.assertIn("role", parsed["error"].lower())
 
+    def test_assign_role_unknown_value(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(role_manager=MagicMock()),
+            op="assign", target="roles", session_id="sid", role="nonsense",
+        )))
+        self.assertFalse(parsed["ok"])
+
 
 class TestDeleteRole(unittest.TestCase):
     def test_delete_role(self):
         role_manager = MagicMock()
+        role_manager.remove_role.return_value = True
         parsed = json.loads(asyncio.run(sessions_v2(
             ctx=_make_ctx(role_manager=role_manager),
             op="delete", target="roles", session_id="sid",
         )))
         self.assertEqual(parsed["method"], "DELETE")
         self.assertTrue(parsed["ok"])
-        role_manager.remove_role.assert_called_once_with("sid", removed_by=None)
+        self.assertTrue(parsed["data"]["removed"])
+        # core/roles.py RoleManager.remove_role takes only session_id.
+        role_manager.remove_role.assert_called_once_with("sid")
 
 
 class TestPatchLocks(unittest.TestCase):
