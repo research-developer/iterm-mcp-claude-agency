@@ -9,17 +9,33 @@ def register_all(mcp):
     """Register all tool modules with the FastMCP instance.
 
     Called from fastmcp_server.py after mcp creation and before run().
-    Tool modules are added incrementally; this file is updated as each
-    batch of modules is extracted from fastmcp_server.py.
     """
     from . import (
-        memory, agent_hooks, telemetry, workflows, services,
-        roles, notifications, wait, feedback, managers,
+        memory,
+        agent_hooks,
+        telemetry,
+        workflows,
+        services,
+        roles,
+        notifications,
+        wait,
+        feedback,
+        managers,
+        agents,
+        control,
+        monitoring,
+        modifications,
+        orchestration,
+        commands,
+        sessions,
     )
 
     _MODULES = [
-        memory, agent_hooks, telemetry, workflows, services,
-        roles, notifications, wait, feedback, managers,
+        memory, agent_hooks, telemetry, workflows,
+        services, roles, notifications, wait,
+        feedback, managers, agents, control,
+        monitoring, modifications, orchestration,
+        commands, sessions,
     ]
 
     for mod in _MODULES:
