@@ -2277,6 +2277,8 @@ async def orchestrate_playbook(request: OrchestrateRequest, ctx: Context) -> str
     layout_manager = ctx.request_context.lifespan_context["layout_manager"]
     agent_registry = ctx.request_context.lifespan_context["agent_registry"]
     profile_manager = ctx.request_context.lifespan_context["profile_manager"]
+    lock_manager = ctx.request_context.lifespan_context.get("tag_lock_manager")
+    notification_manager = ctx.request_context.lifespan_context.get("notification_manager")
     logger = ctx.request_context.lifespan_context["logger"]
 
     try:
@@ -3781,7 +3783,7 @@ async def query_feedback(
     ctx: Context,
     status: Optional[str] = None,
     category: Optional[str] = None,
-    agent_id: Optional[str] = None,
+    agent_name: Optional[str] = None,
     limit: int = 20,
 ) -> str:
     """Query the feedback registry.
@@ -3789,7 +3791,7 @@ async def query_feedback(
     Args:
         status: Filter by status (pending, triaged, in_progress, resolved, testing, closed)
         category: Filter by category (bug, enhancement, ux, performance, docs)
-        agent_id: Filter by agent who submitted
+        agent_name: Filter by agent name who submitted
         limit: Max number of results
     """
     feedback_registry = ctx.request_context.lifespan_context["feedback_registry"]
@@ -3812,10 +3814,10 @@ async def query_feedback(
                 pass
 
         # Query
-        entries = await feedback_registry.query(
+        entries = feedback_registry.query(
             status=status_filter,
             category=category_filter,
-            agent_id=agent_id,
+            agent_name=agent_name,
             limit=limit,
         )
 
