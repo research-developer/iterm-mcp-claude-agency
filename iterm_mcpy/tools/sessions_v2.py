@@ -90,7 +90,7 @@ class SessionsDispatcher(MethodDispatcher):
                 "agents_only?",
                 "target?",
                 "targets?",
-                "max_lines?", "strip_ansi?", "parallel?",
+                "max_lines?", "parallel?",
                 "target='status'",
             ],
             "description": (
@@ -223,26 +223,30 @@ class SessionsDispatcher(MethodDispatcher):
         return response.sessions
 
     async def _get_output(self, ctx, **params):
-        """GET /sessions/output — read terminal output via execute_read_request."""
-        # Build a ReadSessionsRequest. Accept either an explicit `targets=[...]`
-        # list (matching old read_sessions) or shortcut params identifying a
-        # single session.
+        """GET /sessions/output — read terminal output via execute_read_request.
+
+        Three ways to specify targets, in precedence order:
+        1. Explicit `targets=[...]` list (matching legacy read_sessions)
+        2. Shortcut params (session_id / agent / name / team) → built into a
+           single target
+        3. Neither provided → delegate to ReadSessionsRequest's built-in
+           "active session" semantics (pass an empty targets list)
+        """
         targets = params.get("targets")
-        if not targets:
+        if targets is None:
             target_spec: dict = {}
             for key in ("session_id", "agent", "name", "team"):
                 val = params.get(key)
                 if val is not None:
                     target_spec[key] = val
-            if not target_spec:
-                raise ValueError(
-                    "read output requires at least one of: "
-                    "session_id, agent, name, team, or targets"
-                )
-            # Allow per-shortcut max_lines override.
-            if params.get("max_lines") is not None:
-                target_spec["max_lines"] = params["max_lines"]
-            targets = [target_spec]
+            if target_spec:
+                # Allow per-shortcut max_lines override.
+                if params.get("max_lines") is not None:
+                    target_spec["max_lines"] = params["max_lines"]
+                targets = [target_spec]
+            else:
+                # Fall through to the active-session case.
+                targets = []
 
         coerced_targets = [
             ReadTarget(**t) if isinstance(t, dict) else t for t in targets
@@ -435,16 +439,35 @@ class SessionsDispatcher(MethodDispatcher):
     # ---------------------- PATCH / DELETE (Task 4d) ---------------------- #
 
     async def on_patch(self, ctx, definer, **params):
-        """Route PATCH by `target` — tags, roles, locks, or the session itself."""
+        """Route PATCH by (definer, target).
+
+        Per WebSpec definer semantics, we reject definer/target combinations
+        that are not supported. Only `tags` supports APPEND (adding vs
+        replacing). All other PATCH targets require MODIFY.
+        """
         target = params.get("target")
+
+        # Only tags supports APPEND; everything else is MODIFY-only.
+        if definer == "APPEND" and target != "tags":
+            raise ValueError(
+                f"PATCH+APPEND is only valid with target='tags'. "
+                f"Use PATCH+MODIFY for target={target!r}."
+            )
+        if definer not in ("MODIFY", "APPEND"):
+            raise ValueError(
+                f"PATCH+{definer} is not supported on sessions. "
+                f"Valid definers are MODIFY (and APPEND for tags)."
+            )
 
         if target == "tags":
             return await self._patch_tags(ctx, definer, **params)
 
         if target == "roles":
+            # MODIFY only (already guarded above).
             return await self._patch_roles(ctx, definer, **params)
 
         if target == "locks":
+            # MODIFY only (already guarded above).
             return await self._patch_locks(ctx, definer, **params)
 
         # PATCH on the session itself — appearance (target='appearance'),
@@ -801,6 +824,10 @@ class SessionsDispatcher(MethodDispatcher):
             raise ValueError("start monitoring: no matching session found")
 
         enable_event_bus = params.get("enable_event_bus", True)
+        # The callback only gets wired up if both the caller opted in AND an
+        # event_bus exists in the lifespan — report the effective state, not
+        # just the requested one, so callers can detect missing infrastructure.
+        event_bus_attached = enable_event_bus and event_bus is not None
 
         results = []
         for session in sessions:
@@ -817,7 +844,8 @@ class SessionsDispatcher(MethodDispatcher):
                 "session_id": session.id,
                 "name": session.name,
                 "started": started,
-                "event_bus": enable_event_bus,
+                "event_bus_requested": enable_event_bus,
+                "event_bus_attached": event_bus_attached,
             })
 
         return {"monitoring": results, "count": len(results)}
@@ -887,7 +915,6 @@ async def sessions_v2(
     target: Optional[str] = None,
     targets: Optional[List[dict]] = None,
     max_lines: Optional[int] = None,
-    strip_ansi: bool = True,
     parallel: Optional[bool] = None,
     filter_pattern: Optional[str] = None,
     messages: Optional[List[dict]] = None,
@@ -981,7 +1008,6 @@ async def sessions_v2(
         "target": target,
         "targets": targets,
         "max_lines": max_lines,
-        "strip_ansi": strip_ansi,
         "parallel": parallel,
         "filter_pattern": filter_pattern,
         "messages": messages,

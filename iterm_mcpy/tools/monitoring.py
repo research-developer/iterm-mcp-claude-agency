@@ -32,10 +32,13 @@ async def _start_monitoring_core(
 
     Args:
         session: The resolved ItermSession to monitor.
-        event_bus: EventBus to route output to (required if enable_event_bus).
+        event_bus: EventBus to route output to. If None (or if
+            enable_event_bus is False), monitoring still starts but no
+            callback is attached — output is not published to the bus.
         logger: Logger for debug/info/error messages.
         enable_event_bus: Whether to attach a callback that routes output to
-            the EventBus (for pattern subscriptions). Default True.
+            the EventBus (for pattern subscriptions). Default True. Silently
+            skipped when event_bus is None.
         settle_delay: Seconds to wait after starting before verifying state.
 
     Returns:

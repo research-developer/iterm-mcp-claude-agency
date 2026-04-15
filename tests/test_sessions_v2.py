@@ -137,17 +137,26 @@ class TestReadOutput(unittest.TestCase):
         parsed = json.loads(result)
         self.assertTrue(parsed["ok"])
 
-    def test_read_missing_target_info_returns_err(self):
+    def test_read_no_targets_falls_through_to_active_session(self):
+        """No targets/session_id/agent/name passed → build a request with an
+        empty targets list, which ReadSessionsRequest interprets as 'active
+        session'. Don't pre-reject — let the request model's defaults apply.
+        """
         async def go():
-            return await sessions_v2(
-                ctx=_make_ctx(),
-                op="GET",
-                target="output",
-                # no session_id/agent/name/team/targets
-            )
-        parsed = json.loads(asyncio.run(go()))
-        self.assertFalse(parsed["ok"])
-        self.assertIn("requires", parsed["error"].lower())
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(mod, "execute_read_request", new=AsyncMock()) as mock_read:
+                from core.models import ReadSessionsResponse
+                mock_read.return_value = ReadSessionsResponse(outputs=[], total_sessions=0)
+                result = await sessions_v2(ctx=_make_ctx(), op="GET", target="output")
+                return mock_read.call_args, result
+
+        call_args, result = asyncio.run(go())
+        # Request built with empty targets — ReadSessionsRequest will resolve
+        # to the active session per its docstring.
+        request = call_args.args[0]
+        self.assertEqual(list(request.targets), [])
+        parsed = json.loads(result)
+        self.assertTrue(parsed["ok"])
 
 
 class TestWriteOutput(unittest.TestCase):
@@ -388,6 +397,47 @@ class TestSendKeys(unittest.TestCase):
 # ========================================================================= #
 # Task 4d — PATCH/DELETE on tags, roles, locks, and active session.         #
 # ========================================================================= #
+
+
+class TestPatchDefinerValidation(unittest.TestCase):
+    """Regression: each PATCH target must only accept compatible definers."""
+
+    def test_patch_append_on_roles_rejected(self):
+        # APPEND is tags-only; roles should reject it rather than silently
+        # execute as MODIFY.
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(role_manager=MagicMock()),
+            op="append", target="roles", session_id="sid", role="builder",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("APPEND", parsed["error"])
+
+    def test_patch_append_on_locks_rejected(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=MagicMock()),
+            op="append", target="locks",
+            session_id="sid", agent="alice", action="lock",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("APPEND", parsed["error"])
+
+    def test_patch_append_on_session_rejected(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(),
+            op="append", session_id="sid",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("APPEND", parsed["error"])
+
+    def test_patch_append_on_tags_accepted(self):
+        # Sanity: APPEND *is* valid on tags.
+        lock_manager = MagicMock()
+        lock_manager.set_tags.return_value = ["x"]
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(lock_manager=lock_manager),
+            op="append", target="tags", session_id="sid", tags=["x"],
+        )))
+        self.assertTrue(parsed["ok"])
 
 
 class TestPatchTags(unittest.TestCase):
