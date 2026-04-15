@@ -13,15 +13,13 @@ def register_all(mcp):
     batch of modules is extracted from fastmcp_server.py.
     """
     from . import (
-        memory,
-        agent_hooks,
-        telemetry,
-        workflows,
-        services,
+        memory, agent_hooks, telemetry, workflows, services,
+        roles, notifications, wait, feedback, managers,
     )
 
     _MODULES = [
         memory, agent_hooks, telemetry, workflows, services,
+        roles, notifications, wait, feedback, managers,
     ]
 
     for mod in _MODULES:
