@@ -940,7 +940,8 @@ class SessionInfo(BaseModel):
     process_name: Optional[str] = Field(default=None, description="Running process name")
 
     # SP2: fields returned by HEAD (compact projection).
-    HEAD_FIELDS: ClassVar[set[str]] = {"session_id", "name", "agent", "status"}
+    # is_processing and locked give just enough to identify a session's state.
+    HEAD_FIELDS: ClassVar[set[str]] = {"session_id", "name", "agent", "is_processing", "locked"}
 
 
 class ListSessionsRequest(BaseModel):

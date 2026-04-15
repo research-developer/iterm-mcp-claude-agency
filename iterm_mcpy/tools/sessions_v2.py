@@ -69,7 +69,7 @@ class SessionsDispatcher(MethodDispatcher):
                 },
             },
         },
-        "HEAD": {"compact_fields": ["session_id", "name", "agent", "status"]},
+        "HEAD": {"compact_fields": ["session_id", "name", "agent", "is_processing", "locked"]},
         "OPTIONS": {"description": "Return this schema."},
     }
 
