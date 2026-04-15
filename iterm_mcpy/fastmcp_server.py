@@ -1576,7 +1576,7 @@ async def list_sessions(
             total_count=len(result),
             filter_applied=bool(filters),
         )
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
 
 @mcp.tool()
@@ -1623,7 +1623,7 @@ async def manage_session_lock(
             session_id=request.session_id,
             error="Tag/lock manager unavailable"
         )
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
     try:
         if request.operation == "lock":
@@ -1634,7 +1634,7 @@ async def manage_session_lock(
                     session_id=request.session_id,
                     error="agent is required for lock operation"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             acquired, owner = lock_manager.lock_session(request.session_id, request.agent)
             status = "acquired" if acquired else "locked"
@@ -1647,7 +1647,7 @@ async def manage_session_lock(
                     "status": status
                 }
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
         elif request.operation == "unlock":
             previous_owner = lock_manager.lock_owner(request.session_id)
@@ -1663,7 +1663,7 @@ async def manage_session_lock(
                     "locked_by": current_owner
                 }
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
         elif request.operation == "request_access":
             if not request.agent:
@@ -1673,7 +1673,7 @@ async def manage_session_lock(
                     session_id=request.session_id,
                     error="agent is required for request_access operation"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             notification_manager = ctx.request_context.lifespan_context.get("notification_manager")
             allowed, owner = lock_manager.check_permission(request.session_id, request.agent)
@@ -1685,7 +1685,7 @@ async def manage_session_lock(
                     session_id=request.session_id,
                     data={"allowed": True}
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             # Notify the lock owner about the access request
             await notify_lock_request(
@@ -1705,7 +1705,7 @@ async def manage_session_lock(
                     "locked_by": owner
                 }
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
         else:
             response = ManageSessionLockResponse(
@@ -1714,7 +1714,7 @@ async def manage_session_lock(
                 session_id=request.session_id,
                 error=f"Unknown operation: {request.operation}"
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         response = ManageSessionLockResponse(
@@ -1723,7 +1723,7 @@ async def manage_session_lock(
             session_id=request.session_id,
             error=str(e)
         )
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
 
 @mcp.tool()
@@ -1874,7 +1874,7 @@ async def create_sessions(request: CreateSessionsRequest, ctx: Context) -> str:
             profile_manager=profile_manager
         )
         logger.info(f"Created {len(result.sessions)} sessions")
-        return result.model_dump_json(indent=2)
+        return result.model_dump_json(indent=2, exclude_none=True)
     except Exception as e:
         logger.error(f"Error creating sessions: {e}")
         return f"Error: {e}"
@@ -2010,7 +2010,7 @@ async def split_session(request: SplitSessionRequest, ctx: Context) -> str:
         )
 
         logger.info(f"Split session {source_session.id} ({split_request.direction}) -> {new_session.id}")
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error splitting session: {e}")
@@ -2041,7 +2041,7 @@ async def write_to_sessions(request: WriteToSessionsRequest, ctx: Context) -> st
             lock_manager=lock_manager,
             notification_manager=notification_manager,
         )
-        return result.model_dump_json(indent=2)
+        return result.model_dump_json(indent=2, exclude_none=True)
     except Exception as e:
         logger.error(f"Error in write_to_sessions: {e}")
         return f"Error: {e}"
@@ -2058,7 +2058,7 @@ async def read_sessions(request: ReadSessionsRequest, ctx: Context) -> str:
     try:
         read_request = ensure_model(ReadSessionsRequest, request)
         result = await execute_read_request(read_request, terminal, agent_registry, logger)
-        return result.model_dump_json(indent=2)
+        return result.model_dump_json(indent=2, exclude_none=True)
     except Exception as e:
         logger.error(f"Error in read_sessions: {e}")
         return f"Error: {e}"
@@ -2139,7 +2139,7 @@ async def send_cascade_message(request: CascadeMessageRequest, ctx: Context) -> 
     try:
         cascade_request = ensure_model(CascadeMessageRequest, request)
         result = await execute_cascade_request(cascade_request, terminal, agent_registry, logger)
-        return result.model_dump_json(indent=2)
+        return result.model_dump_json(indent=2, exclude_none=True)
     except Exception as e:
         logger.error(f"Error in send_cascade_message: {e}")
         return f"Error: {e}"
@@ -2571,7 +2571,7 @@ async def manage_teams(
                     success=False,
                     error="team_name is required for create operation"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             # Check service hooks before creating team
             hook_result = await service_hook_manager.pre_create_team_hook(
@@ -2606,7 +2606,7 @@ async def manage_teams(
                     error=hook_result.message,
                     data={"proceed": False}
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             # Add info about auto-started services
             if hook_result.auto_started:
@@ -2639,7 +2639,7 @@ async def manage_teams(
                 success=True,
                 data=response_data
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
         elif request.operation == "list":
             teams = agent_registry.list_teams()
@@ -2664,7 +2664,7 @@ async def manage_teams(
                 success=True,
                 data={"teams": result, "count": len(result)}
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
         elif request.operation == "remove":
             if not request.team_name:
@@ -2673,7 +2673,7 @@ async def manage_teams(
                     success=False,
                     error="team_name is required for remove operation"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             if agent_registry.remove_team(request.team_name):
                 # Also remove the team's profile
@@ -2689,14 +2689,14 @@ async def manage_teams(
                     success=True,
                     data={"team_name": request.team_name, "profile_removed": profile_removed}
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
             else:
                 response = ManageTeamsResponse(
                     operation=request.operation,
                     success=False,
                     error=f"Team '{request.team_name}' not found"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
         elif request.operation == "assign_agent":
             if not request.team_name or not request.agent_name:
@@ -2705,7 +2705,7 @@ async def manage_teams(
                     success=False,
                     error="team_name and agent_name are required for assign_agent operation"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             if agent_registry.assign_to_team(request.agent_name, request.team_name):
                 logger.info(f"Added agent '{request.agent_name}' to team '{request.team_name}'")
@@ -2714,14 +2714,14 @@ async def manage_teams(
                     success=True,
                     data={"team_name": request.team_name, "agent_name": request.agent_name}
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
             else:
                 response = ManageTeamsResponse(
                     operation=request.operation,
                     success=False,
                     error="Failed to add agent to team (agent not found or already member)"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
         elif request.operation == "remove_agent":
             if not request.team_name or not request.agent_name:
@@ -2730,7 +2730,7 @@ async def manage_teams(
                     success=False,
                     error="team_name and agent_name are required for remove_agent operation"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             if agent_registry.remove_from_team(request.agent_name, request.team_name):
                 logger.info(f"Removed agent '{request.agent_name}' from team '{request.team_name}'")
@@ -2739,14 +2739,14 @@ async def manage_teams(
                     success=True,
                     data={"team_name": request.team_name, "agent_name": request.agent_name}
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
             else:
                 response = ManageTeamsResponse(
                     operation=request.operation,
                     success=False,
                     error="Failed to remove agent from team (agent not found or not a member)"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
         else:
             response = ManageTeamsResponse(
@@ -2754,7 +2754,7 @@ async def manage_teams(
                 success=False,
                 error=f"Unknown operation: {request.operation}"
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error in manage_teams: {e}")
@@ -2763,7 +2763,7 @@ async def manage_teams(
             success=False,
             error=str(e)
         )
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
 
 # ============================================================================
@@ -2994,7 +2994,7 @@ async def modify_sessions(
         )
 
         logger.info(f"Modified sessions: {success_count} succeeded, {error_count} failed")
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error in modify_sessions: {e}")
@@ -3347,7 +3347,7 @@ async def get_notifications(request: GetNotificationsRequest, ctx: Context) -> s
         )
 
         logger.info(f"Retrieved {len(notifications)} notifications")
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error getting notifications: {e}")
@@ -3497,7 +3497,7 @@ async def wait_for_agent(request: WaitForAgentRequest, ctx: Context) -> str:
                 status="unknown",
                 summary=f"Agent '{req.agent}' not found",
                 can_continue_waiting=False,
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # Get the session
         session = await terminal.get_session_by_id(agent.session_id)
@@ -3510,7 +3510,7 @@ async def wait_for_agent(request: WaitForAgentRequest, ctx: Context) -> str:
                 status="unknown",
                 summary=f"Session for agent '{req.agent}' not found",
                 can_continue_waiting=False,
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         logger.info(f"Waiting up to {req.wait_up_to}s for agent {req.agent}")
 
@@ -3559,7 +3559,7 @@ async def wait_for_agent(request: WaitForAgentRequest, ctx: Context) -> str:
                     can_continue_waiting=True,
                 )
                 logger.info(f"Wait for {req.agent} timed out after {elapsed:.1f}s")
-                return result.model_dump_json(indent=2)
+                return result.model_dump_json(indent=2, exclude_none=True)
 
             # Check if processing has stopped (idle)
             is_processing = getattr(session, 'is_processing', False)
@@ -3585,7 +3585,7 @@ async def wait_for_agent(request: WaitForAgentRequest, ctx: Context) -> str:
                         can_continue_waiting=False,
                     )
                     logger.info(f"Agent {req.agent} completed after {elapsed:.1f}s")
-                    return result.model_dump_json(indent=2)
+                    return result.model_dump_json(indent=2, exclude_none=True)
 
                 last_output = current_output
 
@@ -3601,7 +3601,7 @@ async def wait_for_agent(request: WaitForAgentRequest, ctx: Context) -> str:
             status="error",
             summary=str(e),
             can_continue_waiting=False,
-        ).model_dump_json(indent=2)
+        ).model_dump_json(indent=2, exclude_none=True)
 
 
 # ============================================================================
@@ -4192,7 +4192,7 @@ async def manage_services(request: ManageServicesRequest, ctx: Context) -> str:
                 operation=op,
                 success=True,
                 data={"services": result, "count": len(result), "repo_path": request.repo_path}
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # START operation
         elif op == "start":
@@ -4217,7 +4217,7 @@ async def manage_services(request: ManageServicesRequest, ctx: Context) -> str:
                     success=False,
                     error=f"Service '{request.service_name}' not found",
                     data={"available_services": [s.name for s in services]}
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
 
             state = await service_manager.start_service(service, repo_path=request.repo_path)
 
@@ -4230,7 +4230,7 @@ async def manage_services(request: ManageServicesRequest, ctx: Context) -> str:
                     "session_id": state.session_id,
                     "error": state.error_message,
                 }
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # STOP operation
         elif op == "stop":
@@ -4243,7 +4243,7 @@ async def manage_services(request: ManageServicesRequest, ctx: Context) -> str:
                 operation=op,
                 success=success,
                 data={"service": request.service_name, "stopped": success}
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # ADD operation
         elif op == "add":
@@ -4268,7 +4268,7 @@ async def manage_services(request: ManageServicesRequest, ctx: Context) -> str:
                         operation=op,
                         success=False,
                         error="repo_path required when scope is 'repo'"
-                    ).model_dump_json(indent=2)
+                    ).model_dump_json(indent=2, exclude_none=True)
 
                 registry = service_manager.load_repo_config(request.repo_path)
                 registry.services = [s for s in registry.services if s.name != request.service_name]
@@ -4286,7 +4286,7 @@ async def manage_services(request: ManageServicesRequest, ctx: Context) -> str:
                 operation=op,
                 success=True,
                 data={"service": request.service_name, "scope": request.scope, "added": True}
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # CONFIGURE operation
         elif op == "configure":
@@ -4299,7 +4299,7 @@ async def manage_services(request: ManageServicesRequest, ctx: Context) -> str:
                         operation=op,
                         success=False,
                         error="repo_path required when scope is 'repo'"
-                    ).model_dump_json(indent=2)
+                    ).model_dump_json(indent=2, exclude_none=True)
                 registry = service_manager.load_repo_config(request.repo_path)
             else:
                 registry = service_manager.load_global_config()
@@ -4328,7 +4328,7 @@ async def manage_services(request: ManageServicesRequest, ctx: Context) -> str:
                     operation=op,
                     success=False,
                     error=f"Service '{request.service_name}' not found in {request.scope} config"
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
 
             if request.scope == "repo":
                 service_manager.save_repo_config(request.repo_path, registry)
@@ -4341,7 +4341,7 @@ async def manage_services(request: ManageServicesRequest, ctx: Context) -> str:
                 operation=op,
                 success=True,
                 data={"service": request.service_name, "scope": request.scope, "updated": True}
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # LIST_INACTIVE operation
         elif op == "list_inactive":
@@ -4367,14 +4367,14 @@ async def manage_services(request: ManageServicesRequest, ctx: Context) -> str:
                 operation=op,
                 success=True,
                 data={"inactive_services": result, "count": len(result), "repo_path": request.repo_path}
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         else:
             return ManageServicesResponse(
                 operation=op,
                 success=False,
                 error=f"Unknown operation: {op}"
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error in manage_services ({request.operation}): {e}")
@@ -4382,7 +4382,7 @@ async def manage_services(request: ManageServicesRequest, ctx: Context) -> str:
             operation=request.operation,
             success=False,
             error=str(e)
-        ).model_dump_json(indent=2)
+        ).model_dump_json(indent=2, exclude_none=True)
 
 
 # ============================================================================
@@ -4505,7 +4505,7 @@ async def manage_managers(
                     success=False,
                     error="manager_name is required for create operation"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             # Convert worker roles from strings to SessionRole
             worker_roles = {}
@@ -4536,7 +4536,7 @@ async def manage_managers(
                     "created": True
                 }
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
         elif request.operation == "list":
             managers = manager_registry.list_managers()
@@ -4556,7 +4556,7 @@ async def manage_managers(
                 success=True,
                 data={"managers": result, "count": len(result)}
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
         elif request.operation == "get_info":
             if not request.manager_name:
@@ -4565,7 +4565,7 @@ async def manage_managers(
                     success=False,
                     error="manager_name is required for get_info operation"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             manager = manager_registry.get_manager(request.manager_name)
             if not manager:
@@ -4574,7 +4574,7 @@ async def manage_managers(
                     success=False,
                     error=f"Manager '{request.manager_name}' not found"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             response = ManageManagersResponse(
                 operation=request.operation,
@@ -4588,7 +4588,7 @@ async def manage_managers(
                     "metadata": manager.metadata,
                 }
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
         elif request.operation == "remove":
             if not request.manager_name:
@@ -4597,7 +4597,7 @@ async def manage_managers(
                     success=False,
                     error="manager_name is required for remove operation"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             removed = manager_registry.remove_manager(request.manager_name)
 
@@ -4611,7 +4611,7 @@ async def manage_managers(
                 success=removed,
                 data={"manager_name": request.manager_name}
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
         elif request.operation == "add_worker":
             if not request.manager_name or not request.worker_name:
@@ -4620,7 +4620,7 @@ async def manage_managers(
                     success=False,
                     error="manager_name and worker_name are required for add_worker operation"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             manager = manager_registry.get_manager(request.manager_name)
             if not manager:
@@ -4629,7 +4629,7 @@ async def manage_managers(
                     success=False,
                     error=f"Manager '{request.manager_name}' not found"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             role = ManagerSessionRole(request.worker_role) if request.worker_role else None
             manager.add_worker(request.worker_name, role)
@@ -4645,7 +4645,7 @@ async def manage_managers(
                     "role": request.worker_role
                 }
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
         elif request.operation == "remove_worker":
             if not request.manager_name or not request.worker_name:
@@ -4654,7 +4654,7 @@ async def manage_managers(
                     success=False,
                     error="manager_name and worker_name are required for remove_worker operation"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             manager = manager_registry.get_manager(request.manager_name)
             if not manager:
@@ -4663,7 +4663,7 @@ async def manage_managers(
                     success=False,
                     error=f"Manager '{request.manager_name}' not found"
                 )
-                return response.model_dump_json(indent=2)
+                return response.model_dump_json(indent=2, exclude_none=True)
 
             removed = manager.remove_worker(request.worker_name)
 
@@ -4680,7 +4680,7 @@ async def manage_managers(
                     "worker_name": request.worker_name
                 }
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
         else:
             response = ManageManagersResponse(
@@ -4688,7 +4688,7 @@ async def manage_managers(
                 success=False,
                 error=f"Unknown operation: {request.operation}"
             )
-            return response.model_dump_json(indent=2)
+            return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error in manage_managers: {e}")
@@ -4697,7 +4697,7 @@ async def manage_managers(
             success=False,
             error=str(e)
         )
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
 
 @mcp.tool()
@@ -4755,7 +4755,7 @@ async def delegate_task(
             validation_passed=result.validation_passed,
             validation_message=result.validation_message,
         )
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error delegating task: {e}")
@@ -4847,7 +4847,7 @@ async def execute_plan(
             stopped_early=plan_result.stopped_early,
             stop_reason=plan_result.stop_reason,
         )
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error executing plan: {e}")
@@ -5294,14 +5294,14 @@ async def trigger_workflow_event(
             )
 
         logger.info(f"Triggered workflow event: {event_name}")
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error triggering workflow event: {e}")
         return TriggerEventResponse(
             success=False,
             error=str(e)
-        ).model_dump_json(indent=2)
+        ).model_dump_json(indent=2, exclude_none=True)
 
 
 @mcp.tool()
@@ -5347,7 +5347,7 @@ async def list_workflow_events(ctx: Context) -> str:
         )
 
         logger.info(f"Listed {len(events)} workflow events")
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error listing workflow events: {e}")
@@ -5429,7 +5429,7 @@ async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
             operation=request.operation,
             success=False,
             error="Memory store not initialized"
-        ).model_dump_json(indent=2)
+        ).model_dump_json(indent=2, exclude_none=True)
 
     try:
         op = request.operation
@@ -5458,7 +5458,7 @@ async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
                     "key": request.key,
                     "metadata": request.metadata or {}
                 }
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # RETRIEVE operation
         elif op == "retrieve":
@@ -5485,14 +5485,14 @@ async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
                         "metadata": memory.metadata,
                         "namespace": list(memory.namespace)
                     }
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
             else:
                 logger.info(f"Memory not found: {'/'.join(request.namespace)}/{request.key}")
                 return ManageMemoryResponse(
                     operation=op,
                     success=True,
                     data={"found": False, "namespace": request.namespace, "key": request.key}
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
 
         # SEARCH operation
         elif op == "search":
@@ -5526,7 +5526,7 @@ async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
                         for r in results
                     ]
                 }
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # LIST_KEYS operation
         elif op == "list_keys":
@@ -5542,7 +5542,7 @@ async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
                 operation=op,
                 success=True,
                 data={"namespace": request.namespace, "count": len(keys), "keys": keys}
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # LIST_NAMESPACES operation
         elif op == "list_namespaces":
@@ -5560,7 +5560,7 @@ async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
                     "count": len(namespaces),
                     "namespaces": [list(ns) for ns in namespaces]
                 }
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # DELETE operation
         elif op == "delete":
@@ -5588,7 +5588,7 @@ async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
                     "key": request.key,
                     "message": None if deleted else "Memory not found"
                 }
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # CLEAR operation
         elif op == "clear":
@@ -5603,7 +5603,7 @@ async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
                     success=False,
                     error="Confirmation required. Set confirm=True to clear namespace. This permanently deletes all memories.",
                     data={"namespace": request.namespace}
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
 
             ns_tuple = tuple(request.namespace)
             count = await memory_store_instance.clear_namespace(ns_tuple)
@@ -5613,7 +5613,7 @@ async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
                 operation=op,
                 success=True,
                 data={"cleared": True, "namespace": request.namespace, "deleted_count": count}
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # STATS operation
         elif op == "stats":
@@ -5624,14 +5624,14 @@ async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
                 operation=op,
                 success=True,
                 data=stats
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         else:
             return ManageMemoryResponse(
                 operation=op,
                 success=False,
                 error=f"Unknown operation: {op}"
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error in manage_memory ({request.operation}): {e}")
@@ -5639,7 +5639,7 @@ async def manage_memory(request: ManageMemoryRequest, ctx: Context) -> str:
             operation=request.operation,
             success=False,
             error=str(e)
-        ).model_dump_json(indent=2)
+        ).model_dump_json(indent=2, exclude_none=True)
 
 
 @mcp.tool()
@@ -5695,7 +5695,7 @@ async def get_workflow_event_history(
         )
 
         logger.info(f"Retrieved {len(entries)} event history entries")
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error getting event history: {e}")
@@ -5745,7 +5745,7 @@ async def subscribe_to_output_pattern(
         )
 
         logger.info(f"Created pattern subscription: {pattern}")
-        return response.model_dump_json(indent=2)
+        return response.model_dump_json(indent=2, exclude_none=True)
 
     except re.error as e:
         logger.error(f"Invalid regex pattern: {e}")
@@ -5793,7 +5793,7 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
                 operation=op,
                 success=True,
                 data=config.model_dump()
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # UPDATE_CONFIG operation
         elif op == "update_config":
@@ -5822,7 +5822,7 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
                     "updated": config_updates,
                     "config": hook_manager.config.model_dump()
                 }
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # GET_REPO_CONFIG operation
         elif op == "get_repo_config":
@@ -5831,7 +5831,7 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
                     operation=op,
                     success=False,
                     error="repo_path is required for get_repo_config operation"
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
 
             repo_config = hook_manager.load_repo_config(request.repo_path)
             return ManageAgentHooksResponse(
@@ -5842,7 +5842,7 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
                     "config": repo_config.model_dump() if repo_config else None,
                     "config_file": str(Path(request.repo_path) / hook_manager.config.repo_config_filename)
                 }
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # TRIGGER_PATH_CHANGE operation
         elif op == "trigger_path_change":
@@ -5851,13 +5851,13 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
                     operation=op,
                     success=False,
                     error="session_id is required for trigger_path_change operation"
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
             if not request.new_path:
                 return ManageAgentHooksResponse(
                     operation=op,
                     success=False,
                     error="new_path is required for trigger_path_change operation"
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
 
             result = await hook_manager.on_path_changed(
                 request.session_id,
@@ -5870,7 +5870,7 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
                 operation=op,
                 success=True,
                 data=result.to_dict()
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # GET_STATS operation
         elif op == "get_stats":
@@ -5879,7 +5879,7 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
                 operation=op,
                 success=True,
                 data=stats
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # SET_VARIABLE operation - Set iTerm user variable to enable/disable hooks
         elif op == "set_variable":
@@ -5888,13 +5888,13 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
                     operation=op,
                     success=False,
                     error="session_id is required for set_variable operation"
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
             if not request.variable_name:
                 return ManageAgentHooksResponse(
                     operation=op,
                     success=False,
                     error="variable_name is required for set_variable operation"
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
 
             from core.iterm_path_monitor import set_user_variable
             connection = ctx.request_context.lifespan_context["connection"]
@@ -5915,7 +5915,7 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
                     "variable_value": request.variable_value
                 },
                 error=None if success else "Failed to set variable (session may not exist or iTerm not connected)"
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         # GET_VARIABLE operation - Get iTerm user variable
         elif op == "get_variable":
@@ -5924,13 +5924,13 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
                     operation=op,
                     success=False,
                     error="session_id is required for get_variable operation"
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
             if not request.variable_name:
                 return ManageAgentHooksResponse(
                     operation=op,
                     success=False,
                     error="variable_name is required for get_variable operation"
-                ).model_dump_json(indent=2)
+                ).model_dump_json(indent=2, exclude_none=True)
 
             from core.iterm_path_monitor import get_user_variable
             connection = ctx.request_context.lifespan_context["connection"]
@@ -5945,14 +5945,14 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
                     "variable_name": request.variable_name,
                     "variable_value": value
                 }
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
         else:
             return ManageAgentHooksResponse(
                 operation=op,
                 success=False,
                 error=f"Unknown operation: {op}"
-            ).model_dump_json(indent=2)
+            ).model_dump_json(indent=2, exclude_none=True)
 
     except Exception as e:
         logger.error(f"Error in manage_agent_hooks ({request.operation}): {e}")
@@ -5960,7 +5960,7 @@ async def manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> 
             operation=request.operation,
             success=False,
             error=str(e)
-        ).model_dump_json(indent=2)
+        ).model_dump_json(indent=2, exclude_none=True)
 
 
 @mcp.resource("memory://stats")
