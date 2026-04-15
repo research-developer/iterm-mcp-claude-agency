@@ -928,6 +928,19 @@ class ItermSession:
         if self.logger:
             self.logger.log_custom_event("SET_TAB_COLOR", f"Tab color set to RGB({red},{green},{blue})")
 
+    async def set_tab_color_enabled(self, enabled: bool) -> None:
+        """Toggle tab color on or off without changing the configured color.
+
+        Args:
+            enabled: Whether to enable tab coloring
+        """
+        change = iterm2.LocalWriteOnlyProfile()
+        change.set_use_tab_color(enabled)
+        await self.session.async_set_profile_properties(change)
+
+        if self.logger:
+            self.logger.log_custom_event("SET_TAB_COLOR_ENABLED", f"Tab color enabled={enabled}")
+
     async def set_badge(self, text: str) -> None:
         """Set the badge text for the session.
 

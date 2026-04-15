@@ -138,8 +138,8 @@ async def _apply_session_modification(
             await session.set_tab_color(c.red, c.green, c.blue, enabled)
             changes.append(f"tab_color=RGB({c.red},{c.green},{c.blue})")
         elif modification.tab_color_enabled is not None:
-            # Just enable/disable without changing color
-            await session.set_tab_color(0, 0, 0, modification.tab_color_enabled)
+            # Toggle the enable flag without overwriting the currently-configured color.
+            await session.set_tab_color_enabled(modification.tab_color_enabled)
             changes.append(f"tab_color_enabled={modification.tab_color_enabled}")
 
         # Apply cursor color

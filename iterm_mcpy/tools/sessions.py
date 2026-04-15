@@ -451,7 +451,16 @@ async def list_sessions(
         last_activity_dt = None
         process_name = None
 
-        # Gather extended info for all formats (can be slow for many sessions)
+        # Gather extended info. Screen content is the expensive call — only fetch it
+        # when the chosen format actually consumes last_message:
+        #   - compact: never uses last_message
+        #   - grouped: only when include_message=True
+        #   - full/json: always returned in SessionInfo
+        needs_last_message = (
+            format in ("full", "json")
+            or (format == "grouped" and include_message)
+        )
+
         if format in ("grouped", "compact", "full", "json"):
             try:
                 # Get CWD from session
@@ -459,12 +468,13 @@ async def list_sessions(
             except Exception as e:
                 logger.debug(f"Error getting CWD for session {session.id}: {e}")
 
-            try:
-                # Get screen content for last message
-                screen_content = await session.get_screen_contents(max_lines=15)
-                last_message = _extract_last_message(screen_content)
-            except Exception as e:
-                logger.debug(f"Error getting screen for session {session.id}: {e}")
+            if needs_last_message:
+                try:
+                    # Get screen content for last message
+                    screen_content = await session.get_screen_contents(max_lines=15)
+                    last_message = _extract_last_message(screen_content)
+                except Exception as e:
+                    logger.debug(f"Error getting screen for session {session.id}: {e}")
 
             # Convert last_update_time to datetime
             try:

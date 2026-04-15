@@ -71,16 +71,23 @@ async def _execute_task_on_worker(
         wait_time = timeout_seconds if timeout_seconds else 30
         poll_interval = 0.5
         elapsed = 0.0
+        completed = False
 
         while elapsed < wait_time:
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
             # Check if session is no longer processing (command completed)
             if hasattr(session, 'is_processing') and not session.is_processing:
+                completed = True
                 break
 
-        # Read output
+        # Read output (always — may be partial if timed out)
         output = await session.get_screen_contents(max_lines=100)
+
+        # If we have is_processing and exited the loop without completion, report timeout.
+        # (If is_processing isn't available, assume completion to preserve prior behavior.)
+        if hasattr(session, 'is_processing') and not completed and session.is_processing:
+            return output, False, f"Task timed out after {wait_time} seconds"
 
         return output, True, None
 
