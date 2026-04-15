@@ -84,7 +84,6 @@ async def _deliver_hierarchical(
                     "delivered": False,
                     "skipped_reason": "session_not_found",
                 })
-                skipped += 1
                 continue
 
             await session.send_text(message, execute=execute)
@@ -92,8 +91,10 @@ async def _deliver_hierarchical(
             delivered += 1
             actually_delivered.append(agent_name)
 
-        if not actually_delivered:
-            skipped += len(agent_names)
+        # One skip per non-delivered target — single source of truth, no
+        # per-iteration +1s to avoid double-counting when the whole group
+        # fails.
+        skipped += len(agent_names) - len(actually_delivered)
 
         results.append({
             "message": message,

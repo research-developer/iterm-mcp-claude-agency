@@ -100,6 +100,21 @@ class TeamsDispatcher(MethodDispatcher):
         logger.info(f"teams GET: listed {len(result)} teams")
         return {"teams": result, "count": len(result)}
 
+    async def on_head(self, ctx, **params):
+        """HEAD /teams — compact projection honoring advertised compact_fields.
+
+        GET returns plain dicts, so the default ``project_head`` pass-through
+        would return the full payload. Manually project down to the
+        ``compact_fields`` advertised in ``METHODS["HEAD"]`` so HEAD is
+        genuinely cheaper / smaller than GET.
+        """
+        full = await self.on_get(ctx, **params)
+        fields = self.METHODS["HEAD"]["compact_fields"]
+        projected = [
+            {k: t.get(k) for k in fields} for t in full.get("teams", [])
+        ]
+        return {"teams": projected, "count": full.get("count", len(projected))}
+
     # ------------------------------- POST -------------------------------- #
 
     async def on_post(self, ctx, definer, **params):

@@ -17,7 +17,6 @@ from mcp.server.fastmcp import Context
 
 from core.definer_verbs import DefinerError, resolve_op
 from iterm_mcpy.responses import err_envelope, ok_envelope
-from iterm_mcpy.tools import telemetry as telemetry_module
 
 
 async def _start_dashboard(ctx: Context, port: int, duration_seconds: int):
@@ -58,16 +57,9 @@ async def _start_dashboard(ctx: Context, port: int, duration_seconds: int):
 async def _stop_dashboard(ctx: Context):
     """Stop the telemetry dashboard.
 
-    Cancels the legacy-module task (if one exists) and calls
-    :func:`core.dashboard.stop_dashboard` to tear down the server.
+    Calls :func:`core.dashboard.stop_dashboard` to tear down the server.
     """
     logger = ctx.request_context.lifespan_context["logger"]
-
-    cancelled_task = False
-    task = getattr(telemetry_module, "_telemetry_server_task", None)
-    if task is not None and not task.done():
-        task.cancel()
-        cancelled_task = True
 
     try:
         from core.dashboard import stop_dashboard
@@ -79,7 +71,6 @@ async def _stop_dashboard(ctx: Context):
 
     return {
         "status": "stopped",
-        "cancelled_task": cancelled_task,
         "stopped_server": stopped_server,
     }
 

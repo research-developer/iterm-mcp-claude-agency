@@ -66,6 +66,21 @@ class RolesDispatcher(MethodDispatcher):
             return await self._check_permission(ctx, **params)
         return await self._list_available(ctx, **params)
 
+    async def on_head(self, ctx, **params):
+        """HEAD /roles — compact projection honoring advertised compact_fields.
+
+        GET returns plain dicts, so the default ``project_head`` pass-through
+        would return the full payload. Manually project down to the
+        ``compact_fields`` advertised in ``METHODS["HEAD"]`` so HEAD is
+        genuinely cheaper / smaller than GET.
+        """
+        full = await self.on_get(ctx, **params)
+        fields = self.METHODS["HEAD"]["compact_fields"]
+        projected = [
+            {k: r.get(k) for k in fields} for r in full.get("roles", [])
+        ]
+        return {"roles": projected, "count": full.get("count", len(projected))}
+
     async def _list_available(self, ctx, **params):
         """GET /roles — list available role definitions (the catalog).
 
