@@ -300,5 +300,85 @@ class TestOptionsAdvertisesOutputAndSend(unittest.TestCase):
         self.assertIn("target?", get_params)
 
 
+class TestSendKeys(unittest.TestCase):
+    def test_send_control_char_delegates_to_session(self):
+        mock_session = MagicMock()
+        mock_session.id = "sid"
+        mock_session.name = "s1"
+        mock_session.send_control_character = AsyncMock()
+
+        async def go():
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[mock_session])):
+                return await sessions_v2(
+                    ctx=_make_ctx(),
+                    op="send",
+                    target="keys",
+                    control_char="C",
+                    session_id="sid",
+                )
+
+        result = asyncio.run(go())
+        parsed = json.loads(result)
+        self.assertEqual(parsed["method"], "POST")
+        self.assertEqual(parsed["definer"], "SEND")
+        self.assertTrue(parsed["ok"])
+        self.assertEqual(parsed["data"]["count"], 1)
+        mock_session.send_control_character.assert_awaited_once_with("C")
+
+    def test_send_special_key_delegates_to_session(self):
+        mock_session = MagicMock()
+        mock_session.id = "sid"
+        mock_session.name = "s1"
+        mock_session.send_special_key = AsyncMock()
+
+        async def go():
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[mock_session])):
+                return await sessions_v2(
+                    ctx=_make_ctx(),
+                    op="POST",
+                    definer="SEND",
+                    target="keys",
+                    key="enter",
+                    session_id="sid",
+                )
+
+        parsed = json.loads(asyncio.run(go()))
+        self.assertTrue(parsed["ok"])
+        mock_session.send_special_key.assert_awaited_once_with("enter")
+
+    def test_send_keys_both_control_and_key_rejected(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(), op="send", target="keys",
+            control_char="C", key="enter", session_id="sid",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("either", parsed["error"].lower())
+
+    def test_send_keys_missing_both_rejected(self):
+        parsed = json.loads(asyncio.run(sessions_v2(
+            ctx=_make_ctx(), op="send", target="keys", session_id="sid",
+        )))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("requires", parsed["error"].lower())
+
+    def test_send_keys_no_matching_session(self):
+        async def go():
+            from iterm_mcpy.tools import sessions_v2 as mod
+            with patch.object(mod, "resolve_session", new=AsyncMock(return_value=[])):
+                return await sessions_v2(
+                    ctx=_make_ctx(),
+                    op="send",
+                    target="keys",
+                    key="enter",
+                    session_id="nonexistent",
+                )
+
+        parsed = json.loads(asyncio.run(go()))
+        self.assertFalse(parsed["ok"])
+        self.assertIn("no matching session", parsed["error"].lower())
+
+
 if __name__ == "__main__":
     unittest.main()

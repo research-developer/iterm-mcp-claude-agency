@@ -1,4 +1,4 @@
-"""SP2 method-semantic `sessions_v2` tool — Tasks 4a + 4b.
+"""SP2 method-semantic `sessions_v2` tool — Tasks 4a + 4b + 4c.
 
 This module introduces the first collection tool built on the
 MethodDispatcher base class. It currently implements:
@@ -11,10 +11,12 @@ MethodDispatcher base class. It currently implements:
               (delegates to execute_create_sessions)
     POST + SEND   — write to session(s) when target="output"
               (delegates to execute_write_request)
+              OR send control char / special key when target="keys"
+              (unifies old send_control_character / send_special_key)
 
-Sub-resources (keys, tags, locks, roles, monitoring, splits, status)
+Remaining sub-resources (tags, locks, roles, monitoring, splits, status)
 and the remaining POST/PATCH/PUT/DELETE definers are implemented in
-subsequent SP2 tasks (4c–4e).
+subsequent SP2 tasks (4d–4e).
 
 The tool is registered under the provisional name ``sessions_v2`` so it
 coexists with the 17 legacy session-related tools. The final cutover
@@ -37,6 +39,7 @@ from iterm_mcpy.helpers import (
     execute_create_sessions,
     execute_read_request,
     execute_write_request,
+    resolve_session,
 )
 from iterm_mcpy.tools.sessions import _list_sessions_core
 
@@ -87,11 +90,17 @@ class SessionsDispatcher(MethodDispatcher):
                 "SEND": {
                     "aliases": ["send", "write", "dispatch"],
                     "params": [
-                        "target='output'",
+                        "target='output' | target='keys'",
+                        # output target:
                         "messages? | content? + (session_id|agent|name|team)",
                         "parallel?", "skip_duplicates?", "execute?", "use_encoding?",
+                        # keys target:
+                        "control_char? | key? + (session_id|agent|name|team)",
                     ],
-                    "description": "Write text/commands to session(s). target='output' required.",
+                    "description": (
+                        "Write to session(s). target='output' -> text/commands; "
+                        "target='keys' -> control char or named special key."
+                    ),
                 },
             },
         },
@@ -161,7 +170,7 @@ class SessionsDispatcher(MethodDispatcher):
         return await execute_read_request(request, terminal, agent_registry, logger)
 
     async def on_post(self, ctx, definer, **params):
-        """Route POST by `(definer, target)` — create sessions or write output."""
+        """Route POST by `(definer, target)` — create sessions, write output, send keys."""
         target = params.get("target")
 
         if definer == "CREATE" and not target:
@@ -169,6 +178,9 @@ class SessionsDispatcher(MethodDispatcher):
 
         if definer == "SEND" and target == "output":
             return await self._write_output(ctx, **params)
+
+        if definer == "SEND" and target == "keys":
+            return await self._send_keys(ctx, **params)
 
         raise NotImplementedError(
             f"POST+{definer} on target={target!r} not yet implemented"
@@ -276,6 +288,51 @@ class SessionsDispatcher(MethodDispatcher):
             notification_manager=notification_manager,
         )
 
+    async def _send_keys(self, ctx, **params):
+        """POST /sessions/keys — send control char or special key to sessions.
+
+        Accepts exactly one of:
+          - control_char: single letter for Ctrl+X (e.g., "C" for Ctrl+C)
+          - key: named special key (e.g., "enter", "tab", "escape", "up", ...)
+
+        Targets via session_id / agent / name / team (same as resolve_session).
+        """
+        control_char = params.get("control_char")
+        key = params.get("key")
+
+        if control_char and key:
+            raise ValueError("send keys: pass either control_char or key, not both")
+        if not control_char and not key:
+            raise ValueError("send keys: requires control_char=... or key=...")
+
+        terminal = ctx.request_context.lifespan_context["terminal"]
+        agent_registry = ctx.request_context.lifespan_context["agent_registry"]
+        logger = ctx.request_context.lifespan_context["logger"]
+
+        sessions = await resolve_session(
+            terminal,
+            agent_registry,
+            session_id=params.get("session_id"),
+            name=params.get("name"),
+            agent=params.get("agent"),
+            team=params.get("team"),
+        )
+        if not sessions:
+            raise ValueError("send keys: no matching session found")
+
+        results = []
+        for session in sessions:
+            if control_char:
+                await session.send_control_character(control_char)
+                label = f"Ctrl+{control_char.upper()}"
+            else:
+                await session.send_special_key(key)
+                label = f"key '{key}'"
+            logger.info(f"Sent {label} to session {session.name}")
+            results.append({"session_id": session.id, "name": session.name, "sent": label})
+
+        return {"sent": results, "count": len(results)}
+
 
 _dispatcher = SessionsDispatcher()
 
@@ -317,12 +374,17 @@ async def sessions_v2(
     skip_duplicates: Optional[bool] = None,
     execute: Optional[bool] = None,
     use_encoding: Optional[bool] = None,
+    # NEW for 4c: keys sub-resource.
+    control_char: Optional[str] = None,
+    key: Optional[str] = None,
 ) -> str:
-    """Session operations: list, read output, write output, create, HEAD, OPTIONS.
+    """Session operations: list, read output, write output, send keys, create, HEAD, OPTIONS.
 
     Use op="list" or op="GET" to list sessions with filters.
     Use op="GET" + target="output" to read terminal output.
     Use op="send" (or op="POST" + definer="SEND") + target="output" to write.
+    Use op="send" + target="keys" + control_char=... | key=... to send control
+      characters or named special keys to session(s).
     Use op="HEAD" (or "peek"/"summary") for a compact list.
     Use op="OPTIONS" (or "schema"/"discover") to discover the tool's surface.
     Use op="create" (or op="POST") to create new sessions from a layout.
@@ -364,6 +426,8 @@ async def sessions_v2(
         "skip_duplicates": skip_duplicates,
         "execute": execute,
         "use_encoding": use_encoding,
+        "control_char": control_char,
+        "key": key,
     }
     params = {k: v for k, v in raw_params.items() if v is not None}
 
