@@ -171,7 +171,7 @@ After implementing these recommendations:
 
 ## Related Documents
 
-- [FOLLOWUP_ISSUES.md](../FOLLOWUP_ISSUES.md) - Epic tracking
+- [FOLLOWUP_ISSUES.md](archive/FOLLOWUP_ISSUES.md) - Epic tracking
 - [claude-code-mcp-analysis.md](./claude-code-mcp-analysis.md) - Architectural comparison
 - [README.md](../README.md) - Main project README
 

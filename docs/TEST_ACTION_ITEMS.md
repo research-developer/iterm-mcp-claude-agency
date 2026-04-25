@@ -249,7 +249,7 @@ After completing Phase 1-4, we should have:
 
 - [TEST_AUDIT.md](./TEST_AUDIT.md) - Full audit report
 - [TEST_STRATEGY_RECOMMENDATIONS.md](./TEST_STRATEGY_RECOMMENDATIONS.md) - Detailed recommendations
-- [FOLLOWUP_ISSUES.md](../FOLLOWUP_ISSUES.md) - Epic tracking
+- [FOLLOWUP_ISSUES.md](archive/FOLLOWUP_ISSUES.md) - Epic tracking
 
 ---
 
