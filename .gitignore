@@ -79,6 +79,7 @@ Untitled*.ipynb
 **.worktrees/
 1mcp-linux-x64.worktrees/
 1mcp-linux-x64
+mathster/
 
 # Generated files (created at install time from templates)
 com.iterm-mcp.daemon.plist
