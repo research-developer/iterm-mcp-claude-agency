@@ -15,7 +15,7 @@ A Python implementation for controlling iTerm2 terminal sessions with support fo
 ✅ **Test Coverage** - 98 passing tests with 27.77% code coverage  
 ✅ **CI/CD** - Automated testing with coverage reporting
 
-See [EPIC_STATUS.md](EPIC_STATUS.md) for detailed implementation status.
+See [EPIC_STATUS.md](docs/archive/EPIC_STATUS.md) for the historical implementation status of the multi-agent orchestration epic.
 
 ## Features
 

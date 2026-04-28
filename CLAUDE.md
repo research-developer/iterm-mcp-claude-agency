@@ -77,8 +77,8 @@
 
 ## Build & Test Commands
 - Run tests: `python -m unittest discover tests` (run all Python unittest tests)
-- Run server: `python -m server.main` (run the FastMCP server implementation)
-- Run demo mode: `python -m server.main --demo` (run the demo controller)
+- Run server: `python -m iterm_mcpy.main` (run the FastMCP server implementation)
+- Run demo mode: `python -m iterm_mcpy.main --demo` (run the demo controller)
 
 ## Code Style Guidelines
 - **Imports**: Group imports by: standard library, external packages, local modules
@@ -158,6 +158,13 @@ iterm-mcp/
 │       ├── wait_for.py           # long-poll for agent idle (GET)
 │       ├── subscribe.py          # arm an output-pattern subscription
 │       └── telemetry.py          # start/stop telemetry dashboard
+├── docs/                         # Reference & guide docs
+│   ├── archive/                  # Historical epic/audit/roadmap docs
+│   └── superpowers/plans/        # Implementation plans
+├── scripts/                      # Helper scripts (it2api samples, watchers)
+├── examples/
+├── protos/                       # gRPC proto sources
+├── static/
 └── utils/                        # Utility functions
     └── logging.py                # Logging and monitoring utilities
 ```
@@ -197,11 +204,7 @@ git worktree remove .worktrees/<name>
 
 #### Active Worktrees
 
-| Worktree | Branch | Purpose |
-|----------|--------|---------|
-| `.worktrees/refactor-tools` | `refactor/tools-consolidation` | Refactor and consolidate MCP tools |
-| `.worktrees/feat-parallel` | `feat/parallel` | Parallel execution features |
-| `.worktrees/10-auditadapt-test-strategies-from-claude-code-mcp-happy-cli` | `10-auditadapt-test-strategies-from-claude-code-mcp-happy-cli` | Test strategy audit |
+Run `git worktree list` to see currently active worktrees. None are committed long-lived; create them per feature using the convention below.
 
 #### Conventions
 - **Naming**: Use descriptive names matching the branch purpose (e.g., `refactor-tools`, `feat-parallel`)
@@ -311,7 +314,7 @@ schema.
 pip install -e .
 
 # Launch server
-python -m server.main
+python -m iterm_mcpy.main
 ```
 
 ### Claude Desktop Integration
@@ -320,7 +323,7 @@ python -m server.main
 python install_claude_desktop.py
 
 # Make sure to manually start the server before using Claude Desktop
-python -m server.main
+python -m iterm_mcpy.main
 ```
 
 ### Development Commands
@@ -329,11 +332,11 @@ python -m server.main
 pip install -e ".[dev]"
 
 # Run the server in development mode
-python -m server.main --debug
+python -m iterm_mcpy.main --debug
 
 # MCP Protocol debugging
 pip install modelcontextprotocol-inspector
-python -m modelcontextprotocol_inspector server.main
+python -m modelcontextprotocol_inspector iterm_mcpy.main
 ```
 
 ## Recent Changes (March 2025)
