@@ -15,6 +15,7 @@ from mcp.server.fastmcp import Context
 from core.definer_verbs import DefinerError, resolve_op
 from core.models import WaitResult
 from iterm_mcpy.responses import err_envelope, ok_envelope
+from iterm_mcpy.errors import ToolError
 
 
 async def _wait_for_agent_impl(
@@ -146,7 +147,7 @@ async def wait_for(
     try:
         resolution = resolve_op(op, definer=None)
     except DefinerError as e:
-        return err_envelope(method=op.upper(), error=str(e))
+        return err_envelope(method=op.upper(), error=ToolError.from_exception(e))
 
     if resolution.method != "GET":
         return err_envelope(
@@ -179,7 +180,7 @@ async def wait_for(
         )
         return ok_envelope(method="GET", data=result)
     except Exception as e:
-        return err_envelope(method="GET", error=str(e))
+        return err_envelope(method="GET", error=ToolError.from_exception(e))
 
 
 def register(mcp):

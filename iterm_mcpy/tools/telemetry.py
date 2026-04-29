@@ -17,6 +17,7 @@ from mcp.server.fastmcp import Context
 
 from core.definer_verbs import DefinerError, resolve_op
 from iterm_mcpy.responses import err_envelope, ok_envelope
+from iterm_mcpy.errors import ToolError
 
 
 async def _start_dashboard(ctx: Context, port: int, duration_seconds: int):
@@ -104,7 +105,7 @@ async def telemetry(
     try:
         resolution = resolve_op(op, definer)
     except DefinerError as e:
-        return err_envelope(method=op.upper(), error=str(e))
+        return err_envelope(method=op.upper(), error=ToolError.from_exception(e))
 
     method = resolution.method
     resolved_definer = resolution.definer
@@ -122,14 +123,14 @@ async def telemetry(
             data = await _start_dashboard(ctx, port=port, duration_seconds=duration_seconds)
             return ok_envelope(method="POST", definer="TRIGGER", data=data)
         except Exception as e:
-            return err_envelope(method="POST", definer="TRIGGER", error=str(e))
+            return err_envelope(method="POST", definer="TRIGGER", error=ToolError.from_exception(e))
 
     if method == "DELETE":
         try:
             data = await _stop_dashboard(ctx)
             return ok_envelope(method="DELETE", data=data)
         except Exception as e:
-            return err_envelope(method="DELETE", error=str(e))
+            return err_envelope(method="DELETE", error=ToolError.from_exception(e))
 
     return err_envelope(
         method=method,

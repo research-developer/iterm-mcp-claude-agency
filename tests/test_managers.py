@@ -95,7 +95,7 @@ class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
         parsed = json.loads(asyncio.run(managers(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
 
 class TestWrongDefiner(unittest.TestCase):
@@ -105,7 +105,7 @@ class TestWrongDefiner(unittest.TestCase):
             managers(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not in POST family", parsed["error"])
+        self.assertIn("not in POST family", parsed["error"]["message"])
 
 
 # ========================================================================= #
@@ -223,7 +223,7 @@ class TestGetInfo(unittest.TestCase):
             manager_name="missing",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("missing", parsed["error"])
+        self.assertIn("missing", parsed["error"]["message"])
 
     def test_get_via_get_verb_with_manager_name(self):
         # "get" is a GET verb alias; with manager_name it fetches info,
@@ -296,7 +296,7 @@ class TestCreateManager(unittest.TestCase):
             op="create",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("manager_name", parsed["error"].lower())
+        self.assertIn("manager_name", parsed["error"]["message"].lower())
 
     def test_create_manager_with_delegation_strategy_and_roles(self):
         registry = MagicMock()
@@ -380,7 +380,7 @@ class TestAddWorker(unittest.TestCase):
             manager_name="missing", worker_name="w1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("missing", parsed["error"])
+        self.assertIn("missing", parsed["error"]["message"])
 
     def test_add_worker_missing_manager_name_returns_err(self):
         parsed = json.loads(asyncio.run(managers(
@@ -388,7 +388,7 @@ class TestAddWorker(unittest.TestCase):
             op="create", target="workers", worker_name="w1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("manager_name", parsed["error"].lower())
+        self.assertIn("manager_name", parsed["error"]["message"].lower())
 
     def test_add_worker_missing_worker_name_returns_err(self):
         parsed = json.loads(asyncio.run(managers(
@@ -396,7 +396,7 @@ class TestAddWorker(unittest.TestCase):
             op="create", target="workers", manager_name="m1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("worker_name", parsed["error"].lower())
+        self.assertIn("worker_name", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -429,7 +429,7 @@ class TestRemoveManager(unittest.TestCase):
             manager_name="missing",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("missing", parsed["error"])
+        self.assertIn("missing", parsed["error"]["message"])
 
     def test_remove_manager_missing_name_returns_err(self):
         parsed = json.loads(asyncio.run(managers(
@@ -437,7 +437,7 @@ class TestRemoveManager(unittest.TestCase):
             op="delete",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("manager_name", parsed["error"].lower())
+        self.assertIn("manager_name", parsed["error"]["message"].lower())
 
     def test_remove_manager_via_delete_method(self):
         registry = MagicMock()
@@ -486,7 +486,7 @@ class TestRemoveWorker(unittest.TestCase):
             manager_name="m1", worker_name="missing",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("missing", parsed["error"])
+        self.assertIn("missing", parsed["error"]["message"])
 
     def test_remove_worker_manager_not_found_returns_err(self):
         registry = MagicMock()
@@ -497,7 +497,7 @@ class TestRemoveWorker(unittest.TestCase):
             manager_name="missing", worker_name="w1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("missing", parsed["error"])
+        self.assertIn("missing", parsed["error"]["message"])
 
     def test_remove_worker_missing_manager_returns_err(self):
         parsed = json.loads(asyncio.run(managers(
@@ -505,7 +505,7 @@ class TestRemoveWorker(unittest.TestCase):
             op="DELETE", target="workers", worker_name="w1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("manager_name", parsed["error"].lower())
+        self.assertIn("manager_name", parsed["error"]["message"].lower())
 
     def test_remove_worker_missing_worker_returns_err(self):
         parsed = json.loads(asyncio.run(managers(
@@ -513,7 +513,7 @@ class TestRemoveWorker(unittest.TestCase):
             op="DELETE", target="workers", manager_name="m1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("worker_name", parsed["error"].lower())
+        self.assertIn("worker_name", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -527,7 +527,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             managers(ctx=_make_ctx(), op="POST", definer="SEND")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_delete_unknown_target_not_implemented(self):
         parsed = json.loads(asyncio.run(managers(
@@ -535,7 +535,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             op="DELETE", target="bogus",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
 
 if __name__ == "__main__":

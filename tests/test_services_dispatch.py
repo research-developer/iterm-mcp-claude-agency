@@ -108,7 +108,7 @@ class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
         parsed = json.loads(asyncio.run(services(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
 
 class TestWrongDefiner(unittest.TestCase):
@@ -118,7 +118,7 @@ class TestWrongDefiner(unittest.TestCase):
             services(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not in POST family", parsed["error"])
+        self.assertIn("not in POST family", parsed["error"]["message"])
 
 
 # ========================================================================= #
@@ -297,7 +297,7 @@ class TestListInactive(unittest.TestCase):
             op="GET", target="inactive",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("repo_path", parsed["error"].lower())
+        self.assertIn("repo_path", parsed["error"]["message"].lower())
 
     def test_list_inactive_with_min_priority(self):
         from core.services import ServicePriority
@@ -411,7 +411,7 @@ class TestAdd(unittest.TestCase):
             command="run",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("service_name", parsed["error"].lower())
+        self.assertIn("service_name", parsed["error"]["message"].lower())
 
     def test_add_missing_command_returns_err(self):
         parsed = json.loads(asyncio.run(services(
@@ -420,7 +420,7 @@ class TestAdd(unittest.TestCase):
             service_name="api",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("command", parsed["error"].lower())
+        self.assertIn("command", parsed["error"]["message"].lower())
 
     def test_add_repo_scope_without_repo_path_returns_err(self):
         parsed = json.loads(asyncio.run(services(
@@ -431,7 +431,7 @@ class TestAdd(unittest.TestCase):
             scope="repo",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("repo_path", parsed["error"].lower())
+        self.assertIn("repo_path", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -503,9 +503,9 @@ class TestStart(unittest.TestCase):
             service_name="missing",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("missing", parsed["error"])
+        self.assertIn("missing", parsed["error"]["message"])
         # The error should include the available services.
-        self.assertIn("other", parsed["error"])
+        self.assertIn("other", parsed["error"]["message"])
 
     def test_start_failed_returns_failure_state(self):
         svc = _fake_service(name="api")
@@ -532,7 +532,7 @@ class TestStart(unittest.TestCase):
             op="start",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("service_name", parsed["error"].lower())
+        self.assertIn("service_name", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -622,7 +622,7 @@ class TestConfigure(unittest.TestCase):
             priority="required",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("missing", parsed["error"])
+        self.assertIn("missing", parsed["error"]["message"])
         # Must not have saved anything.
         sm.save_global_config.assert_not_called()
 
@@ -633,7 +633,7 @@ class TestConfigure(unittest.TestCase):
             priority="required",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("service_name", parsed["error"].lower())
+        self.assertIn("service_name", parsed["error"]["message"].lower())
 
     def test_configure_repo_scope_without_repo_path_returns_err(self):
         parsed = json.loads(asyncio.run(services(
@@ -643,7 +643,7 @@ class TestConfigure(unittest.TestCase):
             scope="repo",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("repo_path", parsed["error"].lower())
+        self.assertIn("repo_path", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -698,7 +698,7 @@ class TestStop(unittest.TestCase):
             op="stop",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("service_name", parsed["error"].lower())
+        self.assertIn("service_name", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -712,28 +712,28 @@ class TestUnsupportedCombinations(unittest.TestCase):
             services(ctx=_make_ctx(), op="POST", definer="SEND")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_post_invoke_not_implemented(self):
         parsed = json.loads(asyncio.run(
             services(ctx=_make_ctx(), op="POST", definer="INVOKE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_patch_rename_not_implemented(self):
         parsed = json.loads(asyncio.run(
             services(ctx=_make_ctx(), op="PATCH", definer="RENAME")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_put_not_implemented(self):
         parsed = json.loads(asyncio.run(
             services(ctx=_make_ctx(), op="PUT", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #

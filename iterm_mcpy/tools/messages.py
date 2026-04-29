@@ -24,6 +24,7 @@ from core.definer_verbs import DefinerError, resolve_op
 from core.models import CascadeMessageRequest
 from iterm_mcpy.helpers import execute_cascade_request
 from iterm_mcpy.responses import err_envelope, ok_envelope
+from iterm_mcpy.errors import ToolError
 
 
 async def _deliver_hierarchical(
@@ -154,7 +155,7 @@ async def messages(
     try:
         resolution = resolve_op(op, definer)
     except DefinerError as e:
-        return err_envelope(method=op.upper(), error=str(e))
+        return err_envelope(method=op.upper(), error=ToolError.from_exception(e))
 
     if resolution.method != "POST" or resolution.definer != "SEND":
         return err_envelope(
@@ -210,7 +211,7 @@ async def messages(
         return err_envelope(
             method="POST",
             definer="SEND",
-            error=str(e),
+            error=ToolError.from_exception(e),
         )
 
 

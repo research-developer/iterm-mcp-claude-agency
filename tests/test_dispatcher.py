@@ -159,12 +159,12 @@ class TestDispatchErrors(unittest.TestCase):
     def test_unknown_verb_returns_err_envelope(self):
         parsed, _ = run_async(_dispatch(op="frobnicate"))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
     def test_wrong_family_definer_returns_err_envelope(self):
         parsed, _ = run_async(_dispatch(op="POST", definer="REPLACE"))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not in POST family", parsed["error"])
+        self.assertIn("not in POST family", parsed["error"]["message"])
 
     def test_handler_exception_returns_err_envelope(self):
         class Broken(FakeCollection):
@@ -177,7 +177,7 @@ class TestDispatchErrors(unittest.TestCase):
         parsed = json.loads(result)
         self.assertFalse(parsed["ok"])
         self.assertEqual(parsed["method"], "GET")
-        self.assertEqual(parsed["error"], "oops")
+        self.assertEqual(parsed["error"]["message"], "oops")
 
     def test_not_implemented_returns_err_envelope(self):
         class NoPut(FakeCollection):
@@ -189,7 +189,54 @@ class TestDispatchErrors(unittest.TestCase):
         result = asyncio.run(tool.dispatch(ctx=None, op="PUT", name="x"))
         parsed = json.loads(result)
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
+
+
+class TestStructuredErrorCodes(unittest.TestCase):
+    """Regression for fb-20260424-157473f7 #1b: error envelopes carry codes."""
+
+    def test_unknown_op_carries_invalid_op_code(self):
+        parsed, _ = run_async(_dispatch(op="frobnicate"))
+        self.assertEqual(parsed["error"]["code"], "invalid_op")
+
+    def test_wrong_family_definer_carries_invalid_definer_code(self):
+        parsed, _ = run_async(_dispatch(op="POST", definer="REPLACE"))
+        self.assertEqual(parsed["error"]["code"], "invalid_definer")
+
+    def test_not_implemented_carries_not_implemented_code(self):
+        class NoPut(FakeCollection):
+            async def on_put(self, ctx, definer, **params):
+                raise NotImplementedError
+
+        import asyncio
+        tool = NoPut()
+        result = asyncio.run(tool.dispatch(ctx=None, op="PUT", name="x"))
+        parsed = json.loads(result)
+        self.assertEqual(parsed["error"]["code"], "not_implemented")
+
+    def test_handler_exception_carries_internal_code(self):
+        class Broken(FakeCollection):
+            async def on_get(self, ctx, **params):
+                raise RuntimeError("kernel panic")
+
+        import asyncio
+        tool = Broken()
+        result = asyncio.run(tool.dispatch(ctx=None, op="list"))
+        parsed = json.loads(result)
+        self.assertEqual(parsed["error"]["code"], "internal")
+        self.assertEqual(parsed["error"]["message"], "kernel panic")
+
+    def test_keyerror_in_handler_maps_to_missing_param(self):
+        class NeedsParam(FakeCollection):
+            async def on_get(self, ctx, **params):
+                return {"value": params["required"]}  # KeyError if missing
+
+        import asyncio
+        tool = NeedsParam()
+        result = asyncio.run(tool.dispatch(ctx=None, op="list"))
+        parsed = json.loads(result)
+        self.assertEqual(parsed["error"]["code"], "missing_param")
+        self.assertIn("required", parsed["error"]["message"])
 
 
 if __name__ == "__main__":

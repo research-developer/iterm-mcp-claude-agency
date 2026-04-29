@@ -152,7 +152,7 @@ class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
         parsed = json.loads(asyncio.run(feedback(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
 
 class TestWrongDefiner(unittest.TestCase):
@@ -162,7 +162,7 @@ class TestWrongDefiner(unittest.TestCase):
             feedback(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not in POST family", parsed["error"])
+        self.assertIn("not in POST family", parsed["error"]["message"])
 
 
 # ========================================================================= #
@@ -338,7 +338,7 @@ class TestSubmitFeedback(unittest.TestCase):
             description="No title",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("title", parsed["error"].lower())
+        self.assertIn("title", parsed["error"]["message"].lower())
 
     def test_submit_missing_description_returns_err(self):
         parsed = json.loads(asyncio.run(feedback(
@@ -347,7 +347,7 @@ class TestSubmitFeedback(unittest.TestCase):
             title="Only title",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("description", parsed["error"].lower())
+        self.assertIn("description", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -449,7 +449,7 @@ class TestCheckTriggers(unittest.TestCase):
             session_id="s1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("agent_name", parsed["error"].lower())
+        self.assertIn("agent_name", parsed["error"]["message"].lower())
 
     def test_missing_session_returns_err(self):
         parsed = json.loads(asyncio.run(feedback(
@@ -458,7 +458,7 @@ class TestCheckTriggers(unittest.TestCase):
             agent_name="a1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("session_id", parsed["error"].lower())
+        self.assertIn("session_id", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -517,7 +517,7 @@ class TestFork(unittest.TestCase):
             session_id="s-1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("feedback_id", parsed["error"].lower())
+        self.assertIn("feedback_id", parsed["error"]["message"].lower())
 
     def test_fork_missing_session_id_returns_err(self):
         parsed = json.loads(asyncio.run(feedback(
@@ -526,7 +526,7 @@ class TestFork(unittest.TestCase):
             feedback_id="fb-1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("session_id", parsed["error"].lower())
+        self.assertIn("session_id", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -589,7 +589,7 @@ class TestTriageToGithub(unittest.TestCase):
             feedback_id="missing",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("missing", parsed["error"])
+        self.assertIn("missing", parsed["error"]["message"])
 
     def test_triage_gh_fails_returns_err(self):
         registry = MagicMock()
@@ -607,7 +607,7 @@ class TestTriageToGithub(unittest.TestCase):
             feedback_id="fb-1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Failed to create GitHub issue", parsed["error"])
+        self.assertIn("Failed to create GitHub issue", parsed["error"]["message"])
 
     def test_triage_missing_feedback_id_returns_err(self):
         parsed = json.loads(asyncio.run(feedback(
@@ -615,7 +615,7 @@ class TestTriageToGithub(unittest.TestCase):
             op="triage", target="issues",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("feedback_id", parsed["error"].lower())
+        self.assertIn("feedback_id", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -692,7 +692,7 @@ class TestNotifyUpdate(unittest.TestCase):
             message="hi",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("missing", parsed["error"])
+        self.assertIn("missing", parsed["error"]["message"])
 
     def test_notify_missing_feedback_id_returns_err(self):
         parsed = json.loads(asyncio.run(feedback(
@@ -702,7 +702,7 @@ class TestNotifyUpdate(unittest.TestCase):
             message="done",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("feedback_id", parsed["error"].lower())
+        self.assertIn("feedback_id", parsed["error"]["message"].lower())
 
     def test_notify_missing_update_type_returns_err(self):
         parsed = json.loads(asyncio.run(feedback(
@@ -712,7 +712,7 @@ class TestNotifyUpdate(unittest.TestCase):
             message="done",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("update_type", parsed["error"].lower())
+        self.assertIn("update_type", parsed["error"]["message"].lower())
 
     def test_notify_missing_message_returns_err(self):
         parsed = json.loads(asyncio.run(feedback(
@@ -722,7 +722,7 @@ class TestNotifyUpdate(unittest.TestCase):
             update_type="resolved",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("message", parsed["error"].lower())
+        self.assertIn("message", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -833,7 +833,7 @@ class TestUpdateConfig(unittest.TestCase):
             op="update", target="bogus",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -851,7 +851,7 @@ class TestDeleteNotImplemented(unittest.TestCase):
         self.assertFalse(parsed["ok"])
         # The dispatcher's default on_delete raises NotImplementedError,
         # which the dispatcher converts into an err envelope.
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -867,7 +867,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             agent_name="a1", session_id="s1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_post_trigger_wrong_target(self):
         parsed = json.loads(asyncio.run(feedback(
@@ -876,7 +876,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             feedback_id="fb-1", session_id="s1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_post_send_wrong_target(self):
         parsed = json.loads(asyncio.run(feedback(
@@ -885,7 +885,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             feedback_id="fb-1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
 
 if __name__ == "__main__":
