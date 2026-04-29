@@ -749,13 +749,14 @@ class SessionsDispatcher(MethodDispatcher):
                 "CREATE": {
                     "aliases": ["create", "split"],
                     "params": [
-                        "layout", "sessions", "register_agents?", "shell?",
+                        "sessions", "layout?='SINGLE'", "register_agents?", "shell?",
                         "target='splits' + direction='below'|'above'|'left'|'right' + session_id",
                         "name?", "agent?", "team?", "register_agent?",
                     ],
                     "description": (
                         "Create sessions (no target) or split an existing "
-                        "session (target='splits')."
+                        "session (target='splits'). `layout` defaults to "
+                        "'SINGLE' when omitted."
                     ),
                 },
                 "SEND": {

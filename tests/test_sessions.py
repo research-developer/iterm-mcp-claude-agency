@@ -1024,6 +1024,17 @@ class TestCreateSessionsDefaults(unittest.TestCase):
         create_request = call_args.args[0]
         self.assertEqual(create_request.layout, "SINGLE")
 
+    def test_options_schema_marks_layout_optional(self):
+        """OPTIONS must reflect that layout is optional, with its default value."""
+        parsed = json.loads(asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS")))
+        create_params = parsed["data"]["methods"]["POST"]["definers"]["CREATE"]["params"]
+        layout_entries = [p for p in create_params if p.startswith("layout")]
+        self.assertEqual(len(layout_entries), 1, f"expected one layout entry, got {layout_entries}")
+        self.assertTrue(
+            layout_entries[0].startswith("layout?"),
+            f"expected layout to be advertised as optional ('layout?...'), got {layout_entries[0]!r}",
+        )
+
     def test_create_sessions_with_explicit_layout_preserved(self):
         from core.models import CreateSessionsResponse
         from iterm_mcpy.tools import sessions as mod
