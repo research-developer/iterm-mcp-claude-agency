@@ -23,6 +23,10 @@ _logger = logging.getLogger("iterm-mcp-session")
 # Cache time-to-live for CWD in seconds
 CWD_CACHE_TTL_SECONDS = 30
 
+# Settings for the set_name retry loop (see ItermSession.set_name).
+_SET_NAME_MAX_ATTEMPTS = 3
+_SET_NAME_RETRY_DELAY = 0.2
+
 
 @dataclass
 class ExpectResult:
@@ -373,48 +377,39 @@ class ItermSession:
         """
         self.logger = logger
     
-    async def set_name(self, name: str, max_attempts: int = 3, retry_delay: float = 0.2) -> None:
+    async def set_name(self, name: str) -> None:
         """Set the name of the session, retrying until iTerm2 agrees.
 
-        iterm2's `async_set_name` propagates asynchronously inside iTerm; on
-        a freshly-created session the first call can land before iTerm has
-        finished applying the profile default, and the rename gets clobbered.
-        We therefore set, sleep briefly, then re-read `session.name` to confirm.
-        See feedback fb-20260424-157473f7 item #2 for the user-visible bug
-        ("session created with name='x' came back named ' '").
-
-        Args:
-            name: The new name for the session.
-            max_attempts: How many times to call `async_set_name` before
-                giving up. Best-effort; we do not raise on final failure.
-            retry_delay: Seconds to wait between attempts.
+        iterm2's ``async_set_name`` propagates asynchronously inside iTerm;
+        on a freshly-created session the first call can land before iTerm
+        has finished applying the profile default, and the rename gets
+        clobbered. We call, check, then sleep+retry only if needed —
+        first-create sessions where the rename takes effect immediately
+        skip the sleep entirely. See fb-20260424-157473f7 item #2.
         """
         self._name = name
 
-        # Fast path: iTerm already agrees, no need to call set_name at all.
+        # Fast path: iTerm already agrees, nothing to send.
         if self.session.name == name:
             if self.logger:
                 self.logger.log_session_renamed(name)
             return
 
-        for attempt in range(max_attempts):
+        for attempt in range(_SET_NAME_MAX_ATTEMPTS):
             await self.session.async_set_name(name)
-            # Always sleep and verify after every attempt, including the last.
-            # This ensures iTerm has had a chance to propagate the rename before
-            # we evaluate whether it succeeded (fixes false "did not apply"
-            # warnings caused by reading session.name before iTerm async-applies
-            # the final attempt).
-            await asyncio.sleep(retry_delay)
+            if self.session.name == name:
+                break
+            # Last attempt: give iTerm one more settle window before giving up.
+            await asyncio.sleep(_SET_NAME_RETRY_DELAY)
             if self.session.name == name:
                 break
 
         if self.session.name != name:
-            # Best-effort warning via stdlib logging; ItermSessionLogger does not
-            # expose log_app_event (that method is on ItermLogManager), so we use
-            # the module-level stdlib logger to ensure the warning is always
-            # emitted regardless of which logger object is attached to the session.
+            # Best-effort warning via stdlib logging; ItermSessionLogger does
+            # not expose log_app_event (that method lives on ItermLogManager).
             _logger.warning(
-                "iterm2 did not apply name %r after %d attempt(s)", name, max_attempts
+                "iterm2 did not apply name %r after %d attempt(s)",
+                name, _SET_NAME_MAX_ATTEMPTS,
             )
 
         if self.logger:

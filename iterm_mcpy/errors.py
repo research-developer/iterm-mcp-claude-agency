@@ -24,6 +24,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
+from pydantic import ValidationError
+
 
 class ErrorCode(str, Enum):
     """Stable error codes returned in the `{code, message, hint?}` envelope."""
@@ -83,17 +85,11 @@ class ToolError(Exception):
                 f"Missing required parameter: {key!r}",
             )
 
-        if isinstance(exc, ValueError):
+        if isinstance(exc, ValidationError):
             return ToolError(ErrorCode.INVALID_PARAM, str(exc))
 
-        # Pydantic ValidationError lives in pydantic; import lazily so this
-        # module has no hard pydantic dependency.
-        try:
-            from pydantic import ValidationError
-            if isinstance(exc, ValidationError):
-                return ToolError(ErrorCode.INVALID_PARAM, str(exc))
-        except ImportError:
-            pass
+        if isinstance(exc, ValueError):
+            return ToolError(ErrorCode.INVALID_PARAM, str(exc))
 
         if isinstance(exc, NotImplementedError):
             return ToolError(ErrorCode.NOT_IMPLEMENTED, str(exc) or "Not implemented")

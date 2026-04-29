@@ -17,7 +17,7 @@ legacy per-verb tools; the cutover (rename to ``workflows`` and unregister
 the legacy tools) happens at the end of SP2.
 
 ``list`` uses the public ``EventBus.get_event_info`` introspection API
-(added on PR #114 to remove the previous ``event_bus._registry`` reach-in).
+rather than reaching into the private ``event_bus._registry`` attribute.
 """
 from typing import Any, Dict, Optional
 
