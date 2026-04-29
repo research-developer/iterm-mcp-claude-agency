@@ -1024,6 +1024,18 @@ class TestCreateSessionsDefaults(unittest.TestCase):
         create_request = call_args.args[0]
         self.assertEqual(create_request.layout, "SINGLE")
 
+    def test_options_schema_advertises_from_end(self):
+        """OPTIONS GET advertises from_end? for output reads (fb #3)."""
+        parsed = json.loads(asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS")))
+        get_params = parsed["data"]["methods"]["GET"]["params"]
+        from_end_entries = [p for p in get_params if p.startswith("from_end")]
+        self.assertEqual(
+            len(from_end_entries), 1,
+            f"expected one from_end entry, got {from_end_entries}",
+        )
+        self.assertIn("true", from_end_entries[0],
+                      f"expected default to be advertised: {from_end_entries[0]!r}")
+
     def test_options_schema_marks_layout_optional(self):
         """OPTIONS must reflect that layout is optional, with its default value."""
         parsed = json.loads(asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS")))

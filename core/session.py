@@ -527,11 +527,20 @@ class ItermSession:
         })
 
     @trace_operation("session.get_screen_contents")
-    async def get_screen_contents(self, max_lines: Optional[int] = None) -> str:
+    async def get_screen_contents(
+        self,
+        max_lines: Optional[int] = None,
+        *,
+        from_end: bool = True,
+    ) -> str:
         """Get the contents of the session's screen.
 
         Args:
-            max_lines: Maximum number of lines to retrieve (defaults to session's max_lines)
+            max_lines: Maximum number of lines to retrieve (defaults to session's max_lines).
+            from_end: If True (default), return the last `max_lines` lines (tail);
+                if False, return the first `max_lines` (legacy top-of-buffer slice).
+                Tail is almost always what callers want when monitoring a long-running
+                session — see fb-20260424-157473f7 item #3.
 
         Returns:
             The text contents of the screen
@@ -540,6 +549,7 @@ class ItermSession:
             session_id=self.id,
             session_name=self._name,
             requested_max_lines=max_lines if max_lines is not None else self._max_lines,
+            from_end=from_end,
         )
 
         contents = await self.session.async_get_screen_contents()
@@ -549,9 +559,12 @@ class ItermSession:
         if max_lines is None:
             max_lines = self._max_lines
 
-        max_lines = min(max_lines, contents.number_of_lines)
+        total = contents.number_of_lines
+        max_lines = min(max_lines, total)
+        start = total - max_lines if from_end else 0
+        end = total if from_end else max_lines
 
-        for i in range(max_lines):
+        for i in range(start, end):
             line = contents.line(i)
             line_text = line.string
             if line_text:

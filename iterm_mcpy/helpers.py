@@ -413,8 +413,10 @@ async def execute_read_request(
 
     outputs: List[SessionOutput] = []
 
-    async def read_from_session(session: ItermSession, max_lines: Optional[int]) -> SessionOutput:
-        content = await session.get_screen_contents(max_lines=max_lines)
+    async def read_from_session(
+        session: ItermSession, max_lines: Optional[int], from_end: bool = True
+    ) -> SessionOutput:
+        content = await session.get_screen_contents(max_lines=max_lines, from_end=from_end)
 
         if read_request.filter_pattern:
             try:
@@ -457,9 +459,9 @@ async def execute_read_request(
 
         for session in sessions:
             if read_request.parallel:
-                tasks.append(read_from_session(session, target.max_lines))
+                tasks.append(read_from_session(session, target.max_lines, target.from_end))
             else:
-                outputs.append(await read_from_session(session, target.max_lines))
+                outputs.append(await read_from_session(session, target.max_lines, target.from_end))
 
     if read_request.parallel and tasks:
         outputs.extend(await asyncio.gather(*tasks))
