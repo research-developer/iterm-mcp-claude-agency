@@ -109,7 +109,7 @@ class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
         parsed = json.loads(asyncio.run(memory(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
 
 class TestWrongDefiner(unittest.TestCase):
@@ -119,7 +119,7 @@ class TestWrongDefiner(unittest.TestCase):
             memory(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not in POST family", parsed["error"])
+        self.assertIn("not in POST family", parsed["error"]["message"])
 
 
 # ========================================================================= #
@@ -173,7 +173,7 @@ class TestStore(unittest.TestCase):
             key="k", value="v",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("namespace", parsed["error"].lower())
+        self.assertIn("namespace", parsed["error"]["message"].lower())
 
     def test_store_missing_key_returns_err(self):
         parsed = json.loads(asyncio.run(memory(
@@ -182,7 +182,7 @@ class TestStore(unittest.TestCase):
             namespace=["ns"], value="v",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("key", parsed["error"].lower())
+        self.assertIn("key", parsed["error"]["message"].lower())
 
     def test_store_missing_value_returns_err(self):
         parsed = json.loads(asyncio.run(memory(
@@ -191,7 +191,7 @@ class TestStore(unittest.TestCase):
             namespace=["ns"], key="k",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("value", parsed["error"].lower())
+        self.assertIn("value", parsed["error"]["message"].lower())
 
     def test_store_invalid_namespace_char_returns_err(self):
         parsed = json.loads(asyncio.run(memory(
@@ -200,7 +200,7 @@ class TestStore(unittest.TestCase):
             namespace=["bad ns"], key="k", value="v",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("invalid", parsed["error"].lower())
+        self.assertIn("invalid", parsed["error"]["message"].lower())
 
     def test_store_invalid_key_char_returns_err(self):
         parsed = json.loads(asyncio.run(memory(
@@ -209,7 +209,7 @@ class TestStore(unittest.TestCase):
             namespace=["ns"], key="bad key!", value="v",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("invalid", parsed["error"].lower())
+        self.assertIn("invalid", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -262,7 +262,7 @@ class TestRetrieve(unittest.TestCase):
             key="k",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("namespace", parsed["error"].lower())
+        self.assertIn("namespace", parsed["error"]["message"].lower())
 
     def test_retrieve_missing_key_returns_err(self):
         parsed = json.loads(asyncio.run(memory(
@@ -271,7 +271,7 @@ class TestRetrieve(unittest.TestCase):
             namespace=["ns"],
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("key", parsed["error"].lower())
+        self.assertIn("key", parsed["error"]["message"].lower())
 
 
 class TestHead(unittest.TestCase):
@@ -347,7 +347,7 @@ class TestSearch(unittest.TestCase):
             query="foo",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("namespace", parsed["error"].lower())
+        self.assertIn("namespace", parsed["error"]["message"].lower())
 
     def test_search_missing_query_returns_err(self):
         parsed = json.loads(asyncio.run(memory(
@@ -356,7 +356,7 @@ class TestSearch(unittest.TestCase):
             namespace=["ns"],
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("query", parsed["error"].lower())
+        self.assertIn("query", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -398,7 +398,7 @@ class TestListKeys(unittest.TestCase):
             op="GET", target="keys",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("namespace", parsed["error"].lower())
+        self.assertIn("namespace", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -507,7 +507,7 @@ class TestDeleteKey(unittest.TestCase):
             key="mykey",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("namespace", parsed["error"].lower())
+        self.assertIn("namespace", parsed["error"]["message"].lower())
 
     def test_delete_missing_key_returns_err(self):
         parsed = json.loads(asyncio.run(memory(
@@ -516,7 +516,7 @@ class TestDeleteKey(unittest.TestCase):
             namespace=["proj"],
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("key", parsed["error"].lower())
+        self.assertIn("key", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -562,7 +562,7 @@ class TestClearNamespace(unittest.TestCase):
             namespace=["proj"],
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("confirm", parsed["error"].lower())
+        self.assertIn("confirm", parsed["error"]["message"].lower())
         # Critical: clear_namespace must NOT have been called.
         store.clear_namespace.assert_not_awaited()
 
@@ -576,7 +576,7 @@ class TestClearNamespace(unittest.TestCase):
             namespace=["proj"], confirm=False,
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("confirm", parsed["error"].lower())
+        self.assertIn("confirm", parsed["error"]["message"].lower())
         store.clear_namespace.assert_not_awaited()
 
     def test_clear_missing_namespace_returns_err(self):
@@ -586,7 +586,7 @@ class TestClearNamespace(unittest.TestCase):
             confirm=True,
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("namespace", parsed["error"].lower())
+        self.assertIn("namespace", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -601,7 +601,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             op="POST", definer="INVOKE",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_post_send_not_implemented(self):
         parsed = json.loads(asyncio.run(memory(
@@ -609,7 +609,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             op="POST", definer="SEND",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_put_not_implemented(self):
         parsed = json.loads(asyncio.run(memory(
@@ -617,7 +617,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             op="PUT", definer="REPLACE",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
     def test_patch_not_implemented(self):
         parsed = json.loads(asyncio.run(memory(
@@ -625,7 +625,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             op="PATCH", definer="MODIFY",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #

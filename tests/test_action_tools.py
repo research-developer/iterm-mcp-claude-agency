@@ -81,7 +81,7 @@ class TestMessagesV2(unittest.TestCase):
             op="GET",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("POST+SEND", parsed["error"])
+        self.assertIn("POST+SEND", parsed["error"]["message"])
 
     def test_wrong_definer_returns_err(self):
         # CREATE is a valid POST definer but not what messages supports.
@@ -90,7 +90,7 @@ class TestMessagesV2(unittest.TestCase):
             op="POST", definer="CREATE",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("POST+SEND", parsed["error"])
+        self.assertIn("POST+SEND", parsed["error"]["message"])
 
     def test_unknown_verb_returns_err(self):
         parsed = json.loads(asyncio.run(messages(
@@ -98,7 +98,7 @@ class TestMessagesV2(unittest.TestCase):
             op="frobnicate",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
     def test_missing_cascade_and_targets_returns_err(self):
         parsed = json.loads(asyncio.run(messages(
@@ -106,8 +106,8 @@ class TestMessagesV2(unittest.TestCase):
             op="send",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("cascade", parsed["error"].lower())
-        self.assertIn("targets", parsed["error"].lower())
+        self.assertIn("cascade", parsed["error"]["message"].lower())
+        self.assertIn("targets", parsed["error"]["message"].lower())
 
     def test_both_cascade_and_targets_returns_err(self):
         parsed = json.loads(asyncio.run(messages(
@@ -117,7 +117,7 @@ class TestMessagesV2(unittest.TestCase):
             targets=[{"agent": "alice"}],
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not both", parsed["error"].lower())
+        self.assertIn("not both", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -183,7 +183,7 @@ class TestOrchestrateV2(unittest.TestCase):
             op="GET",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("POST+INVOKE", parsed["error"])
+        self.assertIn("POST+INVOKE", parsed["error"]["message"])
 
     def test_unknown_verb_returns_err(self):
         parsed = json.loads(asyncio.run(orchestrate(
@@ -191,7 +191,7 @@ class TestOrchestrateV2(unittest.TestCase):
             op="frobnicate",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
     def test_missing_playbook_returns_err(self):
         parsed = json.loads(asyncio.run(orchestrate(
@@ -199,7 +199,7 @@ class TestOrchestrateV2(unittest.TestCase):
             op="invoke",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("playbook", parsed["error"].lower())
+        self.assertIn("playbook", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -253,7 +253,7 @@ class TestDelegateV2(unittest.TestCase):
             task="echo hi",  # manager_name missing
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("manager_name", parsed["error"])
+        self.assertIn("manager_name", parsed["error"]["message"])
 
     def test_task_manager_not_found_returns_err(self):
         manager_registry = MagicMock()
@@ -267,8 +267,8 @@ class TestDelegateV2(unittest.TestCase):
             task="echo hi",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("ghost", parsed["error"])
-        self.assertIn("not found", parsed["error"].lower())
+        self.assertIn("ghost", parsed["error"]["message"])
+        self.assertIn("not found", parsed["error"]["message"].lower())
 
     def test_plan_happy_path(self):
         manager = MagicMock()
@@ -307,7 +307,7 @@ class TestDelegateV2(unittest.TestCase):
             manager_name="mgr1",  # plan missing
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("plan", parsed["error"].lower())
+        self.assertIn("plan", parsed["error"]["message"].lower())
 
     def test_bad_target_returns_err(self):
         parsed = json.loads(asyncio.run(delegate(
@@ -316,7 +316,7 @@ class TestDelegateV2(unittest.TestCase):
             target="mystery",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("target must be", parsed["error"])
+        self.assertIn("target must be", parsed["error"]["message"])
 
     def test_wrong_op_returns_err(self):
         parsed = json.loads(asyncio.run(delegate(
@@ -324,7 +324,7 @@ class TestDelegateV2(unittest.TestCase):
             op="GET",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("POST+INVOKE", parsed["error"])
+        self.assertIn("POST+INVOKE", parsed["error"]["message"])
 
 
 # ========================================================================= #
@@ -385,7 +385,7 @@ class TestWaitForV2(unittest.TestCase):
             agent_name="alice",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("GET", parsed["error"])
+        self.assertIn("GET", parsed["error"]["message"])
 
     def test_missing_agent_name_returns_err(self):
         parsed = json.loads(asyncio.run(wait_for(
@@ -393,7 +393,7 @@ class TestWaitForV2(unittest.TestCase):
             op="GET",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("agent_name", parsed["error"])
+        self.assertIn("agent_name", parsed["error"]["message"])
 
     def test_unknown_verb_returns_err(self):
         parsed = json.loads(asyncio.run(wait_for(
@@ -401,7 +401,7 @@ class TestWaitForV2(unittest.TestCase):
             op="frobnicate",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
     def test_out_of_range_timeout_returns_err(self):
         parsed = json.loads(asyncio.run(wait_for(
@@ -411,7 +411,7 @@ class TestWaitForV2(unittest.TestCase):
             wait_up_to=0,  # below min=1
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("1 and 600", parsed["error"])
+        self.assertIn("1 and 600", parsed["error"]["message"])
 
 
 # ========================================================================= #
@@ -455,7 +455,7 @@ class TestSubscribeV2(unittest.TestCase):
             pattern="foo",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("POST+TRIGGER", parsed["error"])
+        self.assertIn("POST+TRIGGER", parsed["error"]["message"])
 
     def test_wrong_definer_returns_err(self):
         parsed = json.loads(asyncio.run(subscribe(
@@ -464,7 +464,7 @@ class TestSubscribeV2(unittest.TestCase):
             pattern="foo",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("POST+TRIGGER", parsed["error"])
+        self.assertIn("POST+TRIGGER", parsed["error"]["message"])
 
     def test_missing_pattern_returns_err(self):
         parsed = json.loads(asyncio.run(subscribe(
@@ -472,7 +472,7 @@ class TestSubscribeV2(unittest.TestCase):
             op="subscribe",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("pattern", parsed["error"].lower())
+        self.assertIn("pattern", parsed["error"]["message"].lower())
 
     def test_bad_regex_returns_err(self):
         parsed = json.loads(asyncio.run(subscribe(
@@ -481,7 +481,7 @@ class TestSubscribeV2(unittest.TestCase):
             pattern="[bad(regex",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Invalid regex", parsed["error"])
+        self.assertIn("Invalid regex", parsed["error"]["message"])
 
 
 # ========================================================================= #
@@ -525,7 +525,7 @@ class TestTelemetryV2(unittest.TestCase):
             op="POST", definer="CREATE",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("TRIGGER", parsed["error"])
+        self.assertIn("TRIGGER", parsed["error"]["message"])
 
     def test_unknown_verb_returns_err(self):
         parsed = json.loads(asyncio.run(telemetry(
@@ -533,7 +533,7 @@ class TestTelemetryV2(unittest.TestCase):
             op="frobnicate",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
     def test_patch_not_supported(self):
         parsed = json.loads(asyncio.run(telemetry(
@@ -541,7 +541,7 @@ class TestTelemetryV2(unittest.TestCase):
             op="PATCH", definer="MODIFY",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("POST+TRIGGER or DELETE", parsed["error"])
+        self.assertIn("POST+TRIGGER or DELETE", parsed["error"]["message"])
 
 
 # ========================================================================= #

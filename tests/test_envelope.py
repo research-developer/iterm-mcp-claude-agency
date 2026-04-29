@@ -66,7 +66,7 @@ class TestErrEnvelope(unittest.TestCase):
         s = err_envelope(method="POST", error="boom")
         parsed = json.loads(s)
         self.assertFalse(parsed["ok"])
-        self.assertEqual(parsed["error"], "boom")
+        self.assertEqual(parsed["error"]["message"], "boom")
         self.assertNotIn("data", parsed)
 
     def test_includes_definer_when_present(self):

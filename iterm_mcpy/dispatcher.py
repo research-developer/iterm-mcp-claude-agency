@@ -17,6 +17,7 @@ from core.definer_verbs import (
     DefinerResolution,
     resolve_op,
 )
+from iterm_mcpy.errors import ErrorCode, ToolError
 from iterm_mcpy.responses import (
     err_envelope,
     ok_envelope,
@@ -97,7 +98,11 @@ class MethodDispatcher:
         try:
             resolution: DefinerResolution = resolve_op(op, definer)
         except DefinerError as e:
-            return err_envelope(method=op.upper(), error=str(e))
+            # DefinerError covers "unknown op" and "wrong family for definer".
+            # Use INVALID_DEFINER when a definer was explicitly given (the
+            # caller's choice was wrong), otherwise INVALID_OP.
+            code = ErrorCode.INVALID_DEFINER if definer else ErrorCode.INVALID_OP
+            return err_envelope(method=op.upper(), error=ToolError(code, str(e)))
 
         method = resolution.method
         resolved_definer = resolution.definer
@@ -148,18 +153,24 @@ class MethodDispatcher:
 
             return err_envelope(
                 method=method,
-                error=f"Method {method} not supported on {self.collection}",
+                error=ToolError(
+                    ErrorCode.INVALID_OP,
+                    f"Method {method} not supported on {self.collection}",
+                ),
             )
 
         except NotImplementedError:
             return err_envelope(
                 method=method,
                 definer=resolved_definer,
-                error=f"Method {method} not implemented on {self.collection}",
+                error=ToolError(
+                    ErrorCode.NOT_IMPLEMENTED,
+                    f"Method {method} not implemented on {self.collection}",
+                ),
             )
         except Exception as e:
             return err_envelope(
                 method=method,
                 definer=resolved_definer,
-                error=str(e),
+                error=ToolError.from_exception(e),
             )

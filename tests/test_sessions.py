@@ -131,7 +131,7 @@ class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
         parsed = json.loads(asyncio.run(sessions(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
 
 class TestWrongDefiner(unittest.TestCase):
@@ -140,7 +140,7 @@ class TestWrongDefiner(unittest.TestCase):
             sessions(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not in POST family", parsed["error"])
+        self.assertIn("not in POST family", parsed["error"]["message"])
 
 
 class TestReadOutput(unittest.TestCase):
@@ -372,7 +372,7 @@ class TestWriteOutput(unittest.TestCase):
             )
         parsed = json.loads(asyncio.run(go()))
         self.assertFalse(parsed["ok"])
-        self.assertIn("requires", parsed["error"].lower())
+        self.assertIn("requires", parsed["error"]["message"].lower())
 
 
 class TestPostWithUnsupportedDefiner(unittest.TestCase):
@@ -382,7 +382,7 @@ class TestPostWithUnsupportedDefiner(unittest.TestCase):
         ))
         self.assertFalse(parsed["ok"])
         # Dispatcher converts NotImplementedError into a generic err envelope.
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
     def test_post_send_without_target_not_yet_implemented(self):
         # SEND without target='output' is reserved for future sub-resources
@@ -391,7 +391,7 @@ class TestPostWithUnsupportedDefiner(unittest.TestCase):
             sessions(ctx=_make_ctx(), op="POST", definer="SEND")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
 
 class TestOptionsAdvertisesOutputAndSend(unittest.TestCase):
@@ -460,14 +460,14 @@ class TestSendKeys(unittest.TestCase):
             control_char="C", key="enter", session_id="sid",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("either", parsed["error"].lower())
+        self.assertIn("either", parsed["error"]["message"].lower())
 
     def test_send_keys_missing_both_rejected(self):
         parsed = json.loads(asyncio.run(sessions(
             ctx=_make_ctx(), op="send", target="keys", session_id="sid",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("requires", parsed["error"].lower())
+        self.assertIn("requires", parsed["error"]["message"].lower())
 
     def test_send_keys_no_matching_session(self):
         async def go():
@@ -483,7 +483,7 @@ class TestSendKeys(unittest.TestCase):
 
         parsed = json.loads(asyncio.run(go()))
         self.assertFalse(parsed["ok"])
-        self.assertIn("no matching session", parsed["error"].lower())
+        self.assertIn("no matching session", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -502,7 +502,7 @@ class TestPatchDefinerValidation(unittest.TestCase):
             op="append", target="roles", session_id="sid", role="builder",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("APPEND", parsed["error"])
+        self.assertIn("APPEND", parsed["error"]["message"])
 
     def test_patch_append_on_locks_rejected(self):
         parsed = json.loads(asyncio.run(sessions(
@@ -511,7 +511,7 @@ class TestPatchDefinerValidation(unittest.TestCase):
             session_id="sid", agent="alice", action="lock",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("APPEND", parsed["error"])
+        self.assertIn("APPEND", parsed["error"]["message"])
 
     def test_patch_append_on_session_rejected(self):
         parsed = json.loads(asyncio.run(sessions(
@@ -519,7 +519,7 @@ class TestPatchDefinerValidation(unittest.TestCase):
             op="append", session_id="sid",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("APPEND", parsed["error"])
+        self.assertIn("APPEND", parsed["error"]["message"])
 
     def test_patch_append_on_tags_accepted(self):
         # Sanity: APPEND *is* valid on tags.
@@ -569,7 +569,7 @@ class TestPatchTags(unittest.TestCase):
             op="update", target="tags", session_id="sid",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("tags", parsed["error"].lower())
+        self.assertIn("tags", parsed["error"]["message"].lower())
 
 
 class TestPatchActive(unittest.TestCase):
@@ -592,7 +592,7 @@ class TestPatchActive(unittest.TestCase):
             op="update", target="active", session_id="sid",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
 
 class TestPatchRoles(unittest.TestCase):
@@ -616,7 +616,7 @@ class TestPatchRoles(unittest.TestCase):
             op="assign", target="roles", session_id="sid",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("role", parsed["error"].lower())
+        self.assertIn("role", parsed["error"]["message"].lower())
 
     def test_assign_role_unknown_value(self):
         parsed = json.loads(asyncio.run(sessions(
@@ -680,7 +680,7 @@ class TestPatchLocks(unittest.TestCase):
             op="update", target="locks", session_id="sid",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("agent", parsed["error"].lower())
+        self.assertIn("agent", parsed["error"]["message"].lower())
 
     def test_patch_locks_bad_action(self):
         parsed = json.loads(asyncio.run(sessions(
@@ -688,7 +688,7 @@ class TestPatchLocks(unittest.TestCase):
             op="update", target="locks", session_id="sid", agent="a", action="bogus",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("unknown action", parsed["error"].lower())
+        self.assertIn("unknown action", parsed["error"]["message"].lower())
 
 
 class TestDeleteLock(unittest.TestCase):
@@ -709,7 +709,7 @@ class TestDeleteLock(unittest.TestCase):
             op="delete", target="locks", session_id="sid",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("agent", parsed["error"].lower())
+        self.assertIn("agent", parsed["error"]["message"].lower())
 
 
 class TestOptionsAdvertisesPatchAndDelete(unittest.TestCase):
@@ -768,7 +768,7 @@ class TestGetStatus(unittest.TestCase):
             sessions(ctx=_make_ctx(), op="GET", target="status")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("requires", parsed["error"].lower())
+        self.assertIn("requires", parsed["error"]["message"].lower())
 
     def test_get_status_no_match(self):
         async def go():
@@ -781,7 +781,7 @@ class TestGetStatus(unittest.TestCase):
 
         parsed = json.loads(asyncio.run(go()))
         self.assertFalse(parsed["ok"])
-        self.assertIn("no matching session", parsed["error"].lower())
+        self.assertIn("no matching session", parsed["error"]["message"].lower())
 
 
 class TestStartMonitoring(unittest.TestCase):
@@ -820,7 +820,7 @@ class TestStartMonitoring(unittest.TestCase):
             op="start", target="monitoring",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("requires", parsed["error"].lower())
+        self.assertIn("requires", parsed["error"]["message"].lower())
 
     def test_start_monitoring_no_match(self):
         async def go():
@@ -833,7 +833,7 @@ class TestStartMonitoring(unittest.TestCase):
 
         parsed = json.loads(asyncio.run(go()))
         self.assertFalse(parsed["ok"])
-        self.assertIn("no matching session", parsed["error"].lower())
+        self.assertIn("no matching session", parsed["error"]["message"].lower())
 
 
 class TestStopMonitoring(unittest.TestCase):
@@ -867,7 +867,7 @@ class TestStopMonitoring(unittest.TestCase):
             op="stop", target="monitoring",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("requires", parsed["error"].lower())
+        self.assertIn("requires", parsed["error"]["message"].lower())
 
 
 class TestCreateSplit(unittest.TestCase):
@@ -913,7 +913,7 @@ class TestCreateSplit(unittest.TestCase):
             op="POST", definer="CREATE", target="splits", direction="below",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("session_id", parsed["error"].lower())
+        self.assertIn("session_id", parsed["error"]["message"].lower())
 
 
 class TestPatchAppearance(unittest.TestCase):

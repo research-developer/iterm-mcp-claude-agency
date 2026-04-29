@@ -29,6 +29,7 @@ from core.models import (
     TaskResultResponse,
 )
 from iterm_mcpy.responses import err_envelope, ok_envelope
+from iterm_mcpy.errors import ToolError
 from iterm_mcpy.tools._callbacks import _setup_manager_callbacks
 
 
@@ -210,7 +211,7 @@ async def delegate(
     try:
         resolution = resolve_op(op, definer)
     except DefinerError as e:
-        return err_envelope(method=op.upper(), error=str(e))
+        return err_envelope(method=op.upper(), error=ToolError.from_exception(e))
 
     if resolution.method != "POST" or resolution.definer != "INVOKE":
         return err_envelope(
@@ -255,7 +256,7 @@ async def delegate(
         result = await _execute_plan(ctx, manager_name=manager_name, plan=plan)
         return ok_envelope(method="POST", definer="INVOKE", data=result)
     except Exception as e:
-        return err_envelope(method="POST", definer="INVOKE", error=str(e))
+        return err_envelope(method="POST", definer="INVOKE", error=ToolError.from_exception(e))
 
 
 def register(mcp):

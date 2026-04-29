@@ -414,7 +414,7 @@ class TestTrigger(unittest.TestCase):
             op="trigger",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("event_name", parsed["error"].lower())
+        self.assertIn("event_name", parsed["error"]["message"].lower())
 
     def test_trigger_with_source_and_metadata(self):
         eb = MagicMock()
@@ -484,7 +484,7 @@ class TestUnknownOp(unittest.TestCase):
             op="frobnicate",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
 
 class TestUnsupportedDefiners(unittest.TestCase):
@@ -494,7 +494,7 @@ class TestUnsupportedDefiners(unittest.TestCase):
             op="POST", definer="CREATE",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
     def test_post_send_not_implemented(self):
         parsed = json.loads(asyncio.run(workflows(
@@ -502,7 +502,7 @@ class TestUnsupportedDefiners(unittest.TestCase):
             op="POST", definer="SEND",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
     def test_patch_not_implemented(self):
         parsed = json.loads(asyncio.run(workflows(
@@ -510,7 +510,7 @@ class TestUnsupportedDefiners(unittest.TestCase):
             op="PATCH", definer="MODIFY",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
     def test_delete_not_implemented(self):
         parsed = json.loads(asyncio.run(workflows(
@@ -518,7 +518,7 @@ class TestUnsupportedDefiners(unittest.TestCase):
             op="DELETE",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
     def test_wrong_family_definer_rejected(self):
         # REPLACE belongs to PUT, not POST.
@@ -527,7 +527,7 @@ class TestUnsupportedDefiners(unittest.TestCase):
             op="POST", definer="REPLACE",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not in POST family", parsed["error"])
+        self.assertIn("not in POST family", parsed["error"]["message"])
 
 
 # ========================================================================= #

@@ -14,6 +14,7 @@ from mcp.server.fastmcp import Context
 from core.definer_verbs import DefinerError, resolve_op
 from core.models import PatternSubscriptionResponse
 from iterm_mcpy.responses import err_envelope, ok_envelope
+from iterm_mcpy.errors import ToolError
 
 
 async def subscribe(
@@ -42,7 +43,7 @@ async def subscribe(
     try:
         resolution = resolve_op(op, definer)
     except DefinerError as e:
-        return err_envelope(method=op.upper(), error=str(e))
+        return err_envelope(method=op.upper(), error=ToolError.from_exception(e))
 
     if resolution.method != "POST" or resolution.definer != "TRIGGER":
         return err_envelope(
@@ -91,7 +92,7 @@ async def subscribe(
         logger.info(f"subscribe: pattern={pattern!r} event={event_name!r}")
         return ok_envelope(method="POST", definer="TRIGGER", data=result)
     except Exception as e:
-        return err_envelope(method="POST", definer="TRIGGER", error=str(e))
+        return err_envelope(method="POST", definer="TRIGGER", error=ToolError.from_exception(e))
 
 
 def register(mcp):

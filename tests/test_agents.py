@@ -73,7 +73,7 @@ class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
         parsed = json.loads(asyncio.run(agents(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
 
 class TestWrongDefiner(unittest.TestCase):
@@ -83,7 +83,7 @@ class TestWrongDefiner(unittest.TestCase):
             agents(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not in POST family", parsed["error"])
+        self.assertIn("not in POST family", parsed["error"]["message"])
 
 
 # ========================================================================= #
@@ -227,7 +227,7 @@ class TestRegisterAgent(unittest.TestCase):
             op="register", agent_name="alice",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("session_id", parsed["error"].lower())
+        self.assertIn("session_id", parsed["error"]["message"].lower())
 
     def test_register_missing_agent_name_returns_err(self):
         parsed = json.loads(asyncio.run(agents(
@@ -235,7 +235,7 @@ class TestRegisterAgent(unittest.TestCase):
             op="register", session_id="sid",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("agent_name", parsed["error"].lower())
+        self.assertIn("agent_name", parsed["error"]["message"].lower())
 
     def test_register_session_not_found(self):
         terminal = MagicMock()
@@ -246,7 +246,7 @@ class TestRegisterAgent(unittest.TestCase):
             op="register", agent_name="alice", session_id="missing",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("no matching session", parsed["error"].lower())
+        self.assertIn("no matching session", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -299,7 +299,7 @@ class TestNotify(unittest.TestCase):
             agent="alice", summary="x",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("level", parsed["error"].lower())
+        self.assertIn("level", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -573,7 +573,7 @@ class TestTriggerHook(unittest.TestCase):
             op="POST", definer="TRIGGER", target="hooks",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("hooks_op", parsed["error"].lower())
+        self.assertIn("hooks_op", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -621,7 +621,7 @@ class TestGetLocks(unittest.TestCase):
             op="GET", target="locks",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("agent", parsed["error"].lower())
+        self.assertIn("agent", parsed["error"]["message"].lower())
 
     def test_get_locks_no_lock_manager_returns_err(self):
         parsed = json.loads(asyncio.run(agents(
@@ -629,7 +629,7 @@ class TestGetLocks(unittest.TestCase):
             op="GET", target="locks", agent="alice",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("tag_lock_manager", parsed["error"])
+        self.assertIn("tag_lock_manager", parsed["error"]["message"])
 
 
 # ========================================================================= #
@@ -668,7 +668,7 @@ class TestDeleteAgent(unittest.TestCase):
             op="delete",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("agent_name", parsed["error"].lower())
+        self.assertIn("agent_name", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -682,7 +682,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             agents(ctx=_make_ctx(), op="POST", definer="INVOKE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
     def test_patch_unknown_target_not_implemented(self):
         parsed = json.loads(asyncio.run(agents(
@@ -690,7 +690,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             op="PATCH", target="bogus",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
 
 if __name__ == "__main__":

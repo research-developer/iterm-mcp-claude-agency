@@ -206,7 +206,7 @@ class TestCheckPermission(unittest.TestCase):
             tool_name="npm",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("session_id", parsed["error"].lower())
+        self.assertIn("session_id", parsed["error"]["message"].lower())
 
     def test_check_missing_tool_name_returns_err(self):
         parsed = json.loads(asyncio.run(roles(
@@ -215,7 +215,7 @@ class TestCheckPermission(unittest.TestCase):
             session_id="s-1",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("tool_name", parsed["error"].lower())
+        self.assertIn("tool_name", parsed["error"]["message"].lower())
 
     def test_check_missing_role_manager_returns_err(self):
         ctx = MagicMock()
@@ -226,7 +226,7 @@ class TestCheckPermission(unittest.TestCase):
             session_id="s-1", tool_name="npm",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("role_manager", parsed["error"])
+        self.assertIn("role_manager", parsed["error"]["message"])
 
 
 # ========================================================================= #
@@ -250,7 +250,7 @@ class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
         parsed = json.loads(asyncio.run(roles(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
 
 class TestUnsupportedMethods(unittest.TestCase):
@@ -261,21 +261,21 @@ class TestUnsupportedMethods(unittest.TestCase):
             roles(ctx=_make_ctx(), op="POST", definer="CREATE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
     def test_patch_not_implemented(self):
         parsed = json.loads(asyncio.run(
             roles(ctx=_make_ctx(), op="PATCH", definer="MODIFY")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
     def test_delete_not_implemented(self):
         parsed = json.loads(asyncio.run(
             roles(ctx=_make_ctx(), op="DELETE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not implemented", parsed["error"].lower())
+        self.assertIn("not implemented", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #

@@ -47,25 +47,40 @@ def ok_envelope(
 
 def err_envelope(
     method: str,
-    error: str,
+    error,
     definer: Optional[str] = None,
 ) -> str:
     """Serialize an error result in the SP2 envelope.
 
-    Envelope shape: {"method", "definer"?, "ok": false, "error"}
+    Envelope shape::
+
+        {"method", "definer"?, "ok": false,
+         "error": {"code", "message", "hint"?}}
+
+    The ``error`` argument can be a :class:`iterm_mcpy.errors.ToolError`
+    (preferred) or a bare string (legacy). Bare strings are wrapped as
+    ``ToolError(INTERNAL, message=<str>)`` so the response shape is
+    uniform regardless of caller migration state. See
+    fb-20260424-157473f7 item #1b.
 
     Args:
         method: The HTTP method that was attempted.
-        error: Human-readable error message.
+        error: Either a ``ToolError`` or a bare human-readable string.
         definer: Optional definer verb (if it was resolved before the error).
 
     Returns:
         JSON string with indent=2.
     """
+    # Lazy import keeps responses.py free of circular import risk.
+    from iterm_mcpy.errors import ErrorCode, ToolError
+
+    if isinstance(error, str):
+        error = ToolError(ErrorCode.INTERNAL, error)
+
     payload: dict[str, Any] = {"method": method, "ok": False}
     if definer is not None:
         payload["definer"] = definer
-    payload["error"] = error
+    payload["error"] = error.to_dict()
     return json.dumps(payload, indent=2)
 
 

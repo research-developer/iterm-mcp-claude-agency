@@ -79,7 +79,7 @@ class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
         parsed = json.loads(asyncio.run(teams(ctx=_make_ctx(), op="frobnicate")))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Unknown op", parsed["error"])
+        self.assertIn("Unknown op", parsed["error"]["message"])
 
 
 class TestWrongDefiner(unittest.TestCase):
@@ -89,7 +89,7 @@ class TestWrongDefiner(unittest.TestCase):
             teams(ctx=_make_ctx(), op="POST", definer="REPLACE")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not in POST family", parsed["error"])
+        self.assertIn("not in POST family", parsed["error"]["message"])
 
 
 # ========================================================================= #
@@ -271,7 +271,7 @@ class TestCreateTeam(unittest.TestCase):
             op="create",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("team_name", parsed["error"].lower())
+        self.assertIn("team_name", parsed["error"]["message"].lower())
 
     def test_create_team_with_parent_and_repo_path(self):
         registry, profile_manager, service_hook_manager = self._setup_ctx()
@@ -318,7 +318,7 @@ class TestCreateTeam(unittest.TestCase):
             team_name="infra",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("Required service failed", parsed["error"])
+        self.assertIn("Required service failed", parsed["error"]["message"])
         # Must NOT have created the team or profile when hook blocks.
         registry.create_team.assert_not_called()
         profile_manager.get_or_create_team_profile.assert_not_called()
@@ -401,7 +401,7 @@ class TestAssignAgent(unittest.TestCase):
             team_name="infra", agent_name="missing",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("agent not found", parsed["error"].lower())
+        self.assertIn("agent not found", parsed["error"]["message"].lower())
 
     def test_assign_agent_missing_team_name_returns_err(self):
         parsed = json.loads(asyncio.run(teams(
@@ -409,7 +409,7 @@ class TestAssignAgent(unittest.TestCase):
             op="create", target="agents", agent_name="alice",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("team_name", parsed["error"].lower())
+        self.assertIn("team_name", parsed["error"]["message"].lower())
 
     def test_assign_agent_missing_agent_name_returns_err(self):
         parsed = json.loads(asyncio.run(teams(
@@ -417,7 +417,7 @@ class TestAssignAgent(unittest.TestCase):
             op="create", target="agents", team_name="infra",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("agent_name", parsed["error"].lower())
+        self.assertIn("agent_name", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -476,7 +476,7 @@ class TestRemoveTeam(unittest.TestCase):
             team_name="missing",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("missing", parsed["error"])
+        self.assertIn("missing", parsed["error"]["message"])
 
     def test_remove_team_missing_name_returns_err(self):
         parsed = json.loads(asyncio.run(teams(
@@ -484,7 +484,7 @@ class TestRemoveTeam(unittest.TestCase):
             op="delete",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("team_name", parsed["error"].lower())
+        self.assertIn("team_name", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -519,7 +519,7 @@ class TestRemoveAgentFromTeam(unittest.TestCase):
             team_name="infra", agent_name="missing",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not found", parsed["error"].lower())
+        self.assertIn("not found", parsed["error"]["message"].lower())
 
     def test_remove_agent_missing_team_returns_err(self):
         parsed = json.loads(asyncio.run(teams(
@@ -527,7 +527,7 @@ class TestRemoveAgentFromTeam(unittest.TestCase):
             op="DELETE", target="agents", agent_name="alice",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("team_name", parsed["error"].lower())
+        self.assertIn("team_name", parsed["error"]["message"].lower())
 
     def test_remove_agent_missing_agent_returns_err(self):
         parsed = json.loads(asyncio.run(teams(
@@ -535,7 +535,7 @@ class TestRemoveAgentFromTeam(unittest.TestCase):
             op="DELETE", target="agents", team_name="infra",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("agent_name", parsed["error"].lower())
+        self.assertIn("agent_name", parsed["error"]["message"].lower())
 
 
 # ========================================================================= #
@@ -549,7 +549,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             teams(ctx=_make_ctx(), op="POST", definer="SEND")
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_delete_unknown_target_not_implemented(self):
         parsed = json.loads(asyncio.run(teams(
@@ -557,7 +557,7 @@ class TestUnsupportedCombinations(unittest.TestCase):
             op="DELETE", target="bogus",
         )))
         self.assertFalse(parsed["ok"])
-        self.assertIn("not", parsed["error"].lower())
+        self.assertIn("not", parsed["error"]["message"].lower())
 
 
 if __name__ == "__main__":
