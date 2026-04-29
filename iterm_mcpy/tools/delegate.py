@@ -178,7 +178,7 @@ async def delegate(
     timeout_seconds: Optional[int] = None,
     retry_count: int = 0,
     plan: Optional[Dict[str, Any]] = None,
-) -> str:
+) -> dict[str, Any]:
     """Delegate a task or execute a multi-step plan through a manager.
 
     Replaces the legacy ``delegate_task`` and ``execute_plan`` tools. The

@@ -6,6 +6,7 @@ until an agent's session becomes idle or the timeout elapses.
 Only GET is supported (no state change). Any other (op, definer) pair
 returns an err envelope.
 """
+from typing import Any
 import asyncio
 import time
 from typing import Optional
@@ -129,7 +130,7 @@ async def wait_for(
     wait_up_to: int = 30,
     return_output: bool = True,
     summary_on_timeout: bool = True,
-) -> str:
+) -> dict[str, Any]:
     """Long-poll until an agent becomes idle or the timeout elapses.
 
     Replaces the legacy ``wait_for_agent`` tool. Only GET is supported —

@@ -121,7 +121,7 @@ async def messages(
     broadcast: Optional[str] = None,
     skip_duplicates: bool = True,
     execute: bool = True,
-) -> str:
+) -> dict[str, Any]:
     """Send messages to sessions using cascade or hierarchical targeting.
 
     Unifies the legacy ``send_cascade_message`` and

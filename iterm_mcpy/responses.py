@@ -1,10 +1,11 @@
 """Centralized response serialization for MCP tools.
 
 SP1 shipped `ok_json()` for token-efficient model serialization.
-SP2 adds the envelope format used by method-semantic tools.
+SP2 adds the envelope format used by method-semantic tools. As of the
+fb-20260424-157473f7 item #13 fix, the envelope helpers return native
+``dict`` so FastMCP can produce structured tool output (no double JSON).
 """
-import json
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 from pydantic import BaseModel
 
@@ -25,10 +26,17 @@ def ok_envelope(
     method: str,
     data: Any,
     definer: Optional[str] = None,
-) -> str:
-    """Serialize a successful tool result in the SP2 envelope.
+) -> dict[str, Any]:
+    """Build a successful tool result in the SP2 envelope.
 
-    Envelope shape: {"method", "definer"?, "ok": true, "data"}
+    Envelope shape: ``{"method", "definer"?, "ok": true, "data"}``
+
+    Returns a native ``dict``; FastMCP serializes it for the wire as
+    ``structuredContent`` plus a JSON-stringified ``TextContent`` block.
+    Returning ``dict`` (as opposed to a stringified envelope) avoids the
+    double-encoded ``{"result": "<JSON>"}`` shape MCP clients surface
+    when tool functions are typed ``-> str``. See fb-20260424-157473f7
+    item #13.
 
     Args:
         method: The HTTP method that ran (normalized uppercase).
@@ -36,21 +44,21 @@ def ok_envelope(
         definer: Optional definer verb (for POST/PUT/PATCH). Omitted if None.
 
     Returns:
-        JSON string with indent=2.
+        Envelope dict (not a JSON string).
     """
     payload: dict[str, Any] = {"method": method, "ok": True}
     if definer is not None:
         payload["definer"] = definer
     payload["data"] = _to_jsonable(data)
-    return json.dumps(payload, indent=2)
+    return payload
 
 
 def err_envelope(
     method: str,
     error,
     definer: Optional[str] = None,
-) -> str:
-    """Serialize an error result in the SP2 envelope.
+) -> dict[str, Any]:
+    """Build an error result in the SP2 envelope.
 
     Envelope shape::
 
@@ -63,15 +71,16 @@ def err_envelope(
     uniform regardless of caller migration state. See
     fb-20260424-157473f7 item #1b.
 
+    Returns a native ``dict``; FastMCP handles serialization.
+
     Args:
         method: The HTTP method that was attempted.
         error: Either a ``ToolError`` or a bare human-readable string.
         definer: Optional definer verb (if it was resolved before the error).
 
     Returns:
-        JSON string with indent=2.
+        Envelope dict (not a JSON string).
     """
-    # Lazy import keeps responses.py free of circular import risk.
     from iterm_mcpy.errors import ErrorCode, ToolError
 
     if isinstance(error, str):
@@ -81,7 +90,7 @@ def err_envelope(
     if definer is not None:
         payload["definer"] = definer
     payload["error"] = error.to_dict()
-    return json.dumps(payload, indent=2)
+    return payload
 
 
 def project_head(model_or_list: Any) -> Any:

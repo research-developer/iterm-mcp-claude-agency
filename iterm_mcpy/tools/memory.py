@@ -422,7 +422,7 @@ async def memory(
     query: Optional[str] = None,
     limit: int = 10,
     confirm: bool = False,
-) -> str:
+) -> dict[str, Any]:
     """Memory store ops: retrieve, store, search, list, delete, clear, stats.
 
     Use op="retrieve" (or op="GET") + namespace + key to fetch one value.

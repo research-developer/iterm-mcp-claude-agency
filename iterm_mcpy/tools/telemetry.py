@@ -11,7 +11,7 @@ dashboard lifecycle as a method-semantic action:
 
 Any other (op, definer) pair returns an err envelope.
 """
-from typing import Optional
+from typing import Any, Optional
 
 from mcp.server.fastmcp import Context
 
@@ -82,7 +82,7 @@ async def telemetry(
     definer: Optional[str] = None,
     port: int = 9999,
     duration_seconds: int = 300,
-) -> str:
+) -> dict[str, Any]:
     """Telemetry dashboard lifecycle.
 
     POST+TRIGGER (or op="start"): start the dashboard. Mirrors the legacy

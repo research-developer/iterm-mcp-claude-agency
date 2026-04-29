@@ -33,7 +33,7 @@ async def orchestrate(
     op: str = "POST",
     definer: Optional[str] = None,
     playbook: Optional[Dict[str, Any]] = None,
-) -> str:
+) -> dict[str, Any]:
     """Orchestrate a playbook (layout + commands + cascade + reads).
 
     Replaces the legacy ``orchestrate_playbook`` tool. A playbook bundles

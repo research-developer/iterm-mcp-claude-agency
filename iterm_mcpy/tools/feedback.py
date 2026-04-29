@@ -17,7 +17,7 @@ legacy feedback tools; the cutover (rename to ``feedback`` and unregister
 the legacy tools) happens at the end of SP2.
 """
 import os
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from mcp.server.fastmcp import Context
 
@@ -654,7 +654,7 @@ async def feedback(
     periodic_tool_call_count: Optional[int] = None,
     add_pattern: Optional[str] = None,
     remove_pattern: Optional[str] = None,
-) -> str:
+) -> dict[str, Any]:
     """Feedback lifecycle: submit, query, fork, triage, notify, config.
 
     Use op="query" (or op="GET") (+ status?/category?/agent_name?/limit?) to

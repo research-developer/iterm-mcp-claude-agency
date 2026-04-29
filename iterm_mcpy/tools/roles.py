@@ -20,7 +20,7 @@ Registered under the provisional name ``roles`` to coexist with the
 legacy per-verb tools; the cutover (rename to ``roles`` and unregister
 the legacy tools) happens at the end of SP2.
 """
-from typing import Optional
+from typing import Optional, Any
 
 from mcp.server.fastmcp import Context
 
@@ -168,7 +168,7 @@ async def roles(
     target: Optional[str] = None,
     session_id: Optional[str] = None,
     tool_name: Optional[str] = None,
-) -> str:
+) -> dict[str, Any]:
     """Roles catalog: list role definitions, check tool permissions.
 
     Use op="list" (or op="GET") to list all available role definitions —

@@ -13,7 +13,7 @@ Collection tool implementing the WebSpec agent surface. Replaces 8 SP1 tools:
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from mcp.server.fastmcp import Context
 
@@ -28,7 +28,7 @@ from core.models import (
 from iterm_mcpy.dispatcher import MethodDispatcher
 
 
-async def _manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> str:
+async def _manage_agent_hooks(request: ManageAgentHooksRequest, ctx: Context) -> dict[str, Any]:
     """Unified agent hooks management (module-local helper).
 
     Ported from the SP1 ``manage_agent_hooks`` tool. Kept as a JSON-returning
@@ -725,7 +725,7 @@ async def agents(
     new_path: Optional[str] = None,
     variable_name: Optional[str] = None,
     variable_value: Optional[str] = None,
-) -> str:
+) -> dict[str, Any]:
     """Agent operations: list, register, remove, notify, status, notifications,
     hooks, locks, HEAD, OPTIONS.
 

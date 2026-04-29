@@ -13,7 +13,7 @@ Registered under the provisional name ``teams`` to coexist with the
 legacy ``manage_teams`` tool; the cutover (rename to ``teams`` and
 unregister the legacy tool) happens at the end of SP2.
 """
-from typing import Optional
+from typing import Optional, Any
 
 from mcp.server.fastmcp import Context
 
@@ -328,7 +328,7 @@ async def teams(
     description: Optional[str] = None,
     parent_team: Optional[str] = None,
     repo_path: Optional[str] = None,
-) -> str:
+) -> dict[str, Any]:
     """Team management: list, create, remove, assign agent, remove agent.
 
     Use op="list" (or op="GET") to list all teams with member counts.

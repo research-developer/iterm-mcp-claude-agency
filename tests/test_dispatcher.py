@@ -58,7 +58,7 @@ async def _dispatch(**kwargs):
     import asyncio
     tool = FakeCollection()
     result = await tool.dispatch(ctx=None, **kwargs)
-    return json.loads(result), tool
+    return result, tool
 
 
 def run_async(coro):
@@ -174,7 +174,7 @@ class TestDispatchErrors(unittest.TestCase):
         import asyncio
         tool = Broken()
         result = asyncio.run(tool.dispatch(ctx=None, op="list"))
-        parsed = json.loads(result)
+        parsed = result
         self.assertFalse(parsed["ok"])
         self.assertEqual(parsed["method"], "GET")
         self.assertEqual(parsed["error"]["message"], "oops")
@@ -187,7 +187,7 @@ class TestDispatchErrors(unittest.TestCase):
         import asyncio
         tool = NoPut()
         result = asyncio.run(tool.dispatch(ctx=None, op="PUT", name="x"))
-        parsed = json.loads(result)
+        parsed = result
         self.assertFalse(parsed["ok"])
         self.assertIn("not implemented", parsed["error"]["message"].lower())
 
@@ -211,7 +211,7 @@ class TestStructuredErrorCodes(unittest.TestCase):
         import asyncio
         tool = NoPut()
         result = asyncio.run(tool.dispatch(ctx=None, op="PUT", name="x"))
-        parsed = json.loads(result)
+        parsed = result
         self.assertEqual(parsed["error"]["code"], "not_implemented")
 
     def test_handler_exception_carries_internal_code(self):
@@ -222,7 +222,7 @@ class TestStructuredErrorCodes(unittest.TestCase):
         import asyncio
         tool = Broken()
         result = asyncio.run(tool.dispatch(ctx=None, op="list"))
-        parsed = json.loads(result)
+        parsed = result
         self.assertEqual(parsed["error"]["code"], "internal")
         self.assertEqual(parsed["error"]["message"], "kernel panic")
 
@@ -234,7 +234,7 @@ class TestStructuredErrorCodes(unittest.TestCase):
         import asyncio
         tool = NeedsParam()
         result = asyncio.run(tool.dispatch(ctx=None, op="list"))
-        parsed = json.loads(result)
+        parsed = result
         self.assertEqual(parsed["error"]["code"], "missing_param")
         self.assertIn("required", parsed["error"]["message"])
 
