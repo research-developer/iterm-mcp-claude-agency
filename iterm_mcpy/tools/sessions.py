@@ -736,7 +736,7 @@ class SessionsDispatcher(MethodDispatcher):
                 "agents_only?",
                 "target?",
                 "targets?",
-                "max_lines?", "parallel?",
+                "max_lines?", "from_end?=true", "parallel?",
                 "target='status'",
             ],
             "description": (
@@ -909,13 +909,16 @@ class SessionsDispatcher(MethodDispatcher):
                 val = params.get(key)
                 if val is not None:
                     target_spec[key] = val
+            # max_lines / from_end apply even when no target shortcut is given:
+            # the active-session resolution still honors per-target read options.
+            if params.get("max_lines") is not None:
+                target_spec["max_lines"] = params["max_lines"]
+            if params.get("from_end") is not None:
+                target_spec["from_end"] = params["from_end"]
             if target_spec:
-                # Allow per-shortcut max_lines override.
-                if params.get("max_lines") is not None:
-                    target_spec["max_lines"] = params["max_lines"]
                 targets = [target_spec]
             else:
-                # Fall through to the active-session case.
+                # No shortcut, no read options — pure active-session fallthrough.
                 targets = []
 
         coerced_targets = [
@@ -1580,6 +1583,7 @@ async def sessions(
     target: Optional[str] = None,
     targets: Optional[List[dict]] = None,
     max_lines: Optional[int] = None,
+    from_end: Optional[bool] = None,
     parallel: Optional[bool] = None,
     filter_pattern: Optional[str] = None,
     messages: Optional[List[dict]] = None,
@@ -1673,6 +1677,7 @@ async def sessions(
         "target": target,
         "targets": targets,
         "max_lines": max_lines,
+        "from_end": from_end,
         "parallel": parallel,
         "filter_pattern": filter_pattern,
         "messages": messages,

@@ -227,6 +227,10 @@ class ReadTarget(BaseModel):
     agent: Optional[str] = Field(default=None, description="Agent name")
     team: Optional[str] = Field(default=None, description="Team name (reads all members)")
     max_lines: Optional[int] = Field(default=None, description="Override default max lines")
+    from_end: bool = Field(
+        default=True,
+        description="Return last max_lines (tail). Set False for legacy top-of-buffer slice.",
+    )
 
 
 class ReadSessionsRequest(BaseModel):
