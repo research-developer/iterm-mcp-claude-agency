@@ -749,13 +749,14 @@ class SessionsDispatcher(MethodDispatcher):
                 "CREATE": {
                     "aliases": ["create", "split"],
                     "params": [
-                        "layout", "sessions", "register_agents?", "shell?",
+                        "sessions", "layout?='SINGLE'", "register_agents?", "shell?",
                         "target='splits' + direction='below'|'above'|'left'|'right' + session_id",
                         "name?", "agent?", "team?", "register_agent?",
                     ],
                     "description": (
                         "Create sessions (no target) or split an existing "
-                        "session (target='splits')."
+                        "session (target='splits'). `layout` defaults to "
+                        "'SINGLE' when omitted."
                     ),
                 },
                 "SEND": {
@@ -970,10 +971,14 @@ class SessionsDispatcher(MethodDispatcher):
         # accepted by the tool signature for forward-compat but are not part
         # of the existing CreateSessionsRequest — they're ignored here and
         # will be wired up in a later task if needed.
-        create_request = CreateSessionsRequest.model_validate({
-            "layout": params["layout"],
-            "sessions": params["sessions"],
-        })
+        #
+        # `layout` is omitted when the caller doesn't pass one (the dispatcher
+        # strips None-valued kwargs); fall through to the model's default
+        # ("SINGLE") rather than raising a bare KeyError.
+        request_payload = {"sessions": params["sessions"]}
+        if "layout" in params:
+            request_payload["layout"] = params["layout"]
+        create_request = CreateSessionsRequest.model_validate(request_payload)
         result = await execute_create_sessions(
             create_request,
             terminal,

@@ -979,6 +979,86 @@ class TestPatchAppearance(unittest.TestCase):
         self.assertFalse(parsed["ok"])
 
 
+class TestCreateSessionsDefaults(unittest.TestCase):
+    """Regression coverage for fb-20260424-157473f7 item #1.
+
+    Calling `sessions(op='POST', definer='CREATE', sessions=[...])` with no
+    `layout` parameter used to raise a bare `KeyError: 'layout'` because the
+    dispatcher's None-stripping filter removed the missing key before the
+    Pydantic model could supply its default. The request now defaults to a
+    single-pane layout, matching the CreateSessionsRequest model default.
+    """
+
+    def _ctx(self):
+        return _make_ctx(
+            layout_manager=MagicMock(),
+            profile_manager=MagicMock(),
+        )
+
+    def test_create_sessions_with_no_layout_does_not_raise_keyerror(self):
+        from core.models import CreateSessionsResponse
+        from iterm_mcpy.tools import sessions as mod
+
+        fake_response = CreateSessionsResponse(sessions=[])
+
+        async def go():
+            with patch.object(
+                mod, "execute_create_sessions",
+                new=AsyncMock(return_value=fake_response),
+            ) as mock_exec:
+                result = await sessions(
+                    ctx=self._ctx(),
+                    op="POST", definer="CREATE",
+                    sessions=[{"name": "x"}],
+                )
+                return mock_exec.call_args, result
+
+        call_args, result = asyncio.run(go())
+        parsed = json.loads(result)
+        self.assertTrue(
+            parsed["ok"],
+            f"Expected ok envelope, got error: {parsed.get('error')!r}",
+        )
+        self.assertNotIn("'layout'", str(parsed))
+        # The CreateSessionsRequest should have been built with the default.
+        create_request = call_args.args[0]
+        self.assertEqual(create_request.layout, "SINGLE")
+
+    def test_options_schema_marks_layout_optional(self):
+        """OPTIONS must reflect that layout is optional, with its default value."""
+        parsed = json.loads(asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS")))
+        create_params = parsed["data"]["methods"]["POST"]["definers"]["CREATE"]["params"]
+        layout_entries = [p for p in create_params if p.startswith("layout")]
+        self.assertEqual(len(layout_entries), 1, f"expected one layout entry, got {layout_entries}")
+        self.assertTrue(
+            layout_entries[0].startswith("layout?"),
+            f"expected layout to be advertised as optional ('layout?...'), got {layout_entries[0]!r}",
+        )
+
+    def test_create_sessions_with_explicit_layout_preserved(self):
+        from core.models import CreateSessionsResponse
+        from iterm_mcpy.tools import sessions as mod
+
+        fake_response = CreateSessionsResponse(sessions=[])
+
+        async def go():
+            with patch.object(
+                mod, "execute_create_sessions",
+                new=AsyncMock(return_value=fake_response),
+            ) as mock_exec:
+                await sessions(
+                    ctx=self._ctx(),
+                    op="POST", definer="CREATE",
+                    layout="quad",
+                    sessions=[{"name": "a"}, {"name": "b"}, {"name": "c"}, {"name": "d"}],
+                )
+                return mock_exec.call_args
+
+        call_args = asyncio.run(go())
+        create_request = call_args.args[0]
+        self.assertEqual(create_request.layout, "quad")
+
+
 class TestOptionsAdvertises4e(unittest.TestCase):
     def test_options_lists_new_targets_and_verbs(self):
         parsed = json.loads(asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS")))
