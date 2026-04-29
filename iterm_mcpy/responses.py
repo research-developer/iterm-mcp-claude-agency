@@ -9,6 +9,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel
 
+from iterm_mcpy.errors import ErrorCode, ToolError
+
 
 def ok_json(model: BaseModel) -> str:
     """Serialize a Pydantic model to JSON, excluding None fields.
@@ -81,8 +83,6 @@ def err_envelope(
     Returns:
         Envelope dict (not a JSON string).
     """
-    from iterm_mcpy.errors import ErrorCode, ToolError
-
     if isinstance(error, str):
         error = ToolError(ErrorCode.INTERNAL, error)
 

@@ -125,32 +125,16 @@ class LayoutManager:
             A dictionary mapping pane names to session IDs
         """
         pane_names = self._normalize_pane_names(pane_names, pane_hierarchy, 2)
-        
-        print(f"Creating horizontal split with panes: {pane_names}")
-        
-        # Create a new window for the first pane
+
         left_session = await self.terminal.create_window()
         await left_session.set_name(pane_names[0])
-        print(f"Created left pane with name '{pane_names[0]}', actual name: '{left_session.name}'")
-        
-        # Create a split pane for the second pane
+
         right_session = await self.terminal.create_split_pane(
             left_session.id,
             vertical=True,
             name=pane_names[1]
         )
-        
-        print(f"Created right pane with name '{pane_names[1]}', actual name: '{right_session.name}'")
-        
-        # Force update both session names again
-        await left_session.set_name(pane_names[0])
-        await right_session.set_name(pane_names[1])
-        
-        print(f"After rename - Left pane: '{left_session.name}', Right pane: '{right_session.name}'")
-        
-        # Add a delay to allow the name to be set
-        await asyncio.sleep(1)
-        
+
         return {
             pane_names[0]: left_session.id,
             pane_names[1]: right_session.id
