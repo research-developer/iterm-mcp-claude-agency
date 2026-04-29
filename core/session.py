@@ -373,17 +373,46 @@ class ItermSession:
         """
         self.logger = logger
     
-    async def set_name(self, name: str) -> None:
-        """Set the name of the session.
-        
+    async def set_name(self, name: str, max_attempts: int = 3, retry_delay: float = 0.2) -> None:
+        """Set the name of the session, retrying until iTerm2 agrees.
+
+        iterm2's `async_set_name` propagates asynchronously inside iTerm; on
+        a freshly-created session the first call can land before iTerm has
+        finished applying the profile default, and the rename gets clobbered.
+        We therefore set, sleep briefly, then re-read `session.name` to confirm.
+        See feedback fb-20260424-157473f7 item #2 for the user-visible bug
+        ("session created with name='x' came back named ' '").
+
         Args:
-            name: The new name for the session
+            name: The new name for the session.
+            max_attempts: How many times to call `async_set_name` before
+                giving up. Best-effort; we do not raise on final failure.
+            retry_delay: Seconds to wait between attempts.
         """
-        old_name = self._name
         self._name = name
-        await self.session.async_set_name(name)
-        
-        # Log the name change
+
+        # Fast path: iTerm already agrees, no need to call set_name at all.
+        if self.session.name == name:
+            if self.logger:
+                self.logger.log_session_renamed(name)
+            return
+
+        for attempt in range(max_attempts):
+            await self.session.async_set_name(name)
+            # Verify on the second-and-later attempts, and on the first attempt
+            # when we have more attempts left to use.
+            if attempt + 1 < max_attempts:
+                await asyncio.sleep(retry_delay)
+                if self.session.name == name:
+                    break
+            # Final attempt: don't sleep; if it didn't take, log and move on.
+
+        if self.session.name != name and self.logger:
+            # Best-effort warning; don't raise, the wrapper still reports `name`.
+            log = getattr(self.logger, "log_app_event", None)
+            if callable(log):
+                log("NAME_SET_FAILED", f"iterm2 did not apply name {name!r} after {max_attempts} attempts")
+
         if self.logger:
             self.logger.log_session_renamed(name)
     

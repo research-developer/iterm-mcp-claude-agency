@@ -349,36 +349,15 @@ class ItermTerminal:
         
         # Create a new ItermSession with logger and add to the dictionary
         iterm_session = ItermSession(
-            session=new_session, 
+            session=new_session,
             name=name,
             max_lines=self.default_max_lines
         )
-        
-        # Try to set the name multiple times in case there's a race condition
+
+        # set_name retries internally until iTerm2 agrees (see ItermSession.set_name).
         if name:
-            # Set name and verify
-            for attempt in range(3):
-                await iterm_session.set_name(name)
-                await asyncio.sleep(0.2)  # Give iTerm2 time to set the name
-                
-                # Refresh the session object
-                new_session_name = new_session.name
-                if name in new_session_name:
-                    break
-                    
-                # Log retry attempt if logging is enabled
-                if self.enable_logging and hasattr(self, "log_manager"):
-                    self.log_manager.log_app_event(
-                        "NAME_SET_RETRY",
-                        f"Attempt {attempt+1}: Failed to set session name to '{name}', current name: '{new_session_name}'"
-                    )
-                # If we've tried multiple times and failed, log a warning
-                if attempt == 2 and self.enable_logging and hasattr(self, "log_manager"):
-                    self.log_manager.log_app_event(
-                        "NAME_SET_FAILED",
-                        f"Failed to set session name to '{name}' after 3 attempts"
-                    )
-        
+            await iterm_session.set_name(name)
+
         # Add logger if logging is enabled
         if self.enable_logging and hasattr(self, "log_manager"):
             session_logger = self.log_manager.get_session_logger(
@@ -387,7 +366,7 @@ class ItermTerminal:
                 persistent_id=iterm_session.persistent_id
             )
             iterm_session.set_logger(session_logger)
-            
+
             # Log split pane creation event
             split_type = "Vertical" if vertical else "Horizontal"
             self.log_manager.log_app_event(
@@ -474,30 +453,9 @@ class ItermTerminal:
             max_lines=self.default_max_lines
         )
 
-        # Try to set the name multiple times in case there's a race condition
+        # set_name retries internally until iTerm2 agrees (see ItermSession.set_name).
         if name:
-            # Set name and verify
-            for attempt in range(3):
-                await iterm_session.set_name(name)
-                await asyncio.sleep(0.2)  # Give iTerm2 time to set the name
-
-                # Refresh the session object
-                new_session_name = new_session.name
-                if name in new_session_name:
-                    break
-
-                # Log retry attempt if logging is enabled
-                if self.enable_logging and hasattr(self, "log_manager"):
-                    self.log_manager.log_app_event(
-                        "NAME_SET_RETRY",
-                        f"Attempt {attempt+1}: Failed to set session name to '{name}', current name: '{new_session_name}'"
-                    )
-                # If we've tried multiple times and failed, log a warning
-                if attempt == 2 and self.enable_logging and hasattr(self, "log_manager"):
-                    self.log_manager.log_app_event(
-                        "NAME_SET_FAILED",
-                        f"Failed to set session name to '{name}' after 3 attempts"
-                    )
+            await iterm_session.set_name(name)
 
         # Add logger if logging is enabled
         if self.enable_logging and hasattr(self, "log_manager"):
