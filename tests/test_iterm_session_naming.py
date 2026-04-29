@@ -13,10 +13,12 @@ not yet propagated. The fix pushes a retry+verify loop into
 agrees the name has changed.
 """
 import asyncio
+import logging
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.session import ItermSession
+from utils.logging import ItermSessionLogger
 
 
 def _fake_iterm2_session(initial_name: str = " ", apply_after: int = 1):
@@ -69,20 +71,31 @@ class TestSetNameRetriesUntilApplied(unittest.TestCase):
 
     def test_set_name_logs_warning_and_returns_when_iterm_never_applies(self):
         """If iterm2 silently drops every set_name call, set_name must log a
-        warning and return rather than hang the caller."""
+        warning via the module stdlib logger and return rather than hang."""
         fake = _fake_iterm2_session(initial_name=" ", apply_after=999)
         sess = ItermSession(session=fake, max_lines=50)
-        sess.logger = MagicMock()
+        # Use a spec'd mock so accidental calls to non-existent methods raise
+        # (e.g. log_app_event, which lives on ItermLogManager, not here).
+        sess.logger = MagicMock(spec=ItermSessionLogger)
 
-        asyncio.run(sess.set_name("alpha"))
+        # Patch the module-level stdlib logger that set_name now uses for
+        # failure warnings; assert it is called with the right severity.
+        with patch("core.session._logger") as mock_stdlib_logger:
+            asyncio.run(sess.set_name("alpha"))
+
+            # The stdlib logger must have emitted at least one warning.
+            self.assertTrue(
+                mock_stdlib_logger.warning.called,
+                "Expected _logger.warning() to be called when iTerm never applies the name",
+            )
+            # The warning message must mention the requested name.
+            warning_args = mock_stdlib_logger.warning.call_args
+            self.assertIn("alpha", str(warning_args))
 
         # Wrapper still reflects the requested name (best-effort).
         self.assertEqual(sess.name, "alpha")
-        # iterm2 was retried the expected number of times.
+        # iterm2 was retried the full number of times.
         self.assertGreaterEqual(fake.async_set_name.await_count, 3)
-        # No exception raised.
-        # (We don't assert on a specific logger method — set_name uses the
-        # session logger if attached; the contract is "do not raise".)
 
     def test_set_name_no_op_when_iterm_already_agrees(self):
         """If the iterm2 session already has the requested name, retry must
