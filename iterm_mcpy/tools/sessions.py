@@ -909,15 +909,16 @@ class SessionsDispatcher(MethodDispatcher):
                 val = params.get(key)
                 if val is not None:
                     target_spec[key] = val
+            # max_lines / from_end apply even when no target shortcut is given:
+            # the active-session resolution still honors per-target read options.
+            if params.get("max_lines") is not None:
+                target_spec["max_lines"] = params["max_lines"]
+            if params.get("from_end") is not None:
+                target_spec["from_end"] = params["from_end"]
             if target_spec:
-                # Allow per-shortcut max_lines / from_end override.
-                if params.get("max_lines") is not None:
-                    target_spec["max_lines"] = params["max_lines"]
-                if params.get("from_end") is not None:
-                    target_spec["from_end"] = params["from_end"]
                 targets = [target_spec]
             else:
-                # Fall through to the active-session case.
+                # No shortcut, no read options — pure active-session fallthrough.
                 targets = []
 
         coerced_targets = [

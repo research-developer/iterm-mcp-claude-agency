@@ -180,6 +180,31 @@ class TestReadOutput(unittest.TestCase):
         self.assertTrue(parsed["ok"])
         self.assertIn("outputs", parsed["data"])
 
+    def test_read_with_active_session_honors_from_end(self):
+        """Regression for fb-20260424-157473f7 #3 / Codex P2 on PR #119:
+        when no shortcut target is given (active-session case), `from_end`
+        and `max_lines` must still propagate to the read request."""
+        async def go():
+            from iterm_mcpy.tools import sessions as mod
+            with patch.object(mod, "execute_read_request", new=AsyncMock()) as mock_read:
+                from core.models import ReadSessionsResponse
+                mock_read.return_value = ReadSessionsResponse(outputs=[], total_sessions=0)
+                await sessions(
+                    ctx=_make_ctx(),
+                    op="GET",
+                    target="output",
+                    # No session_id/agent/name/team — pure active-session call.
+                    from_end=False,
+                    max_lines=42,
+                )
+                return mock_read.call_args
+
+        call_args = asyncio.run(go())
+        request = call_args.args[0]
+        self.assertEqual(len(request.targets), 1)
+        self.assertEqual(request.targets[0].from_end, False)
+        self.assertEqual(request.targets[0].max_lines, 42)
+
     def test_read_with_explicit_targets_list(self):
         async def go():
             from iterm_mcpy.tools import sessions as mod
