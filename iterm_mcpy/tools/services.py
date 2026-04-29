@@ -15,7 +15,7 @@ Registered under the provisional name ``services`` to coexist with the
 legacy ``manage_services`` tool; the cutover (rename to ``services`` and
 unregister the legacy tool) happens at the end of SP2.
 """
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from mcp.server.fastmcp import Context
 
@@ -436,7 +436,7 @@ async def services(
     working_directory: Optional[str] = None,
     repo_patterns: Optional[List[str]] = None,
     scope: str = "global",
-) -> str:
+) -> dict[str, Any]:
     """Service management: list, start, stop, add, configure, list_inactive.
 
     Use op="list" (or op="GET") to list configured services. Pass repo_path

@@ -30,7 +30,7 @@ class TestOptions(unittest.TestCase):
         async def go():
             return await sessions(ctx=_make_ctx(), op="OPTIONS")
         result = asyncio.run(go())
-        parsed = json.loads(result)
+        parsed = result
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["collection"], "sessions")
@@ -43,7 +43,7 @@ class TestVerbResolution(unittest.TestCase):
     def test_schema_verb_works(self):
         async def go():
             return await sessions(ctx=_make_ctx(), op="schema")
-        parsed = json.loads(asyncio.run(go()))
+        parsed = asyncio.run(go())
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
 
@@ -55,7 +55,7 @@ class TestHead(unittest.TestCase):
         terminal = MagicMock()
         terminal.sessions = {}
         ctx = _make_ctx(terminal=terminal)
-        parsed = json.loads(asyncio.run(sessions(ctx=ctx, op="HEAD")))
+        parsed = asyncio.run(sessions(ctx=ctx, op="HEAD"))
         self.assertEqual(parsed["method"], "HEAD")
         self.assertTrue(parsed["ok"])
 
@@ -101,7 +101,7 @@ class TestHead(unittest.TestCase):
             terminal=terminal,
             agent_registry=self._empty_agent_registry(),
         )
-        parsed = json.loads(asyncio.run(sessions(ctx=ctx, op="HEAD")))
+        parsed = asyncio.run(sessions(ctx=ctx, op="HEAD"))
         self.assertEqual(parsed["method"], "HEAD")
         self.assertTrue(parsed["ok"])
         self.assertEqual(len(parsed["data"]), 1)
@@ -120,7 +120,7 @@ class TestHead(unittest.TestCase):
             terminal=terminal,
             agent_registry=self._empty_agent_registry(),
         )
-        parsed = json.loads(asyncio.run(sessions(ctx=ctx, op="GET")))
+        parsed = asyncio.run(sessions(ctx=ctx, op="GET"))
         self.assertEqual(parsed["method"], "GET")
         self.assertTrue(parsed["ok"])
         session.get_cwd.assert_awaited()
@@ -129,16 +129,16 @@ class TestHead(unittest.TestCase):
 
 class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
-        parsed = json.loads(asyncio.run(sessions(ctx=_make_ctx(), op="frobnicate")))
+        parsed = asyncio.run(sessions(ctx=_make_ctx(), op="frobnicate"))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"]["message"])
 
 
 class TestWrongDefiner(unittest.TestCase):
     def test_post_replace_rejected(self):
-        parsed = json.loads(asyncio.run(
+        parsed = asyncio.run(
             sessions(ctx=_make_ctx(), op="POST", definer="REPLACE")
-        ))
+        )
         self.assertFalse(parsed["ok"])
         self.assertIn("not in POST family", parsed["error"]["message"])
 
@@ -175,7 +175,7 @@ class TestReadOutput(unittest.TestCase):
         self.assertEqual(request.targets[0].session_id, "abc")
         self.assertEqual(request.targets[0].max_lines, 100)
         # Verify the envelope that came out.
-        parsed = json.loads(result)
+        parsed = result
         self.assertEqual(parsed["method"], "GET")
         self.assertTrue(parsed["ok"])
         self.assertIn("outputs", parsed["data"])
@@ -226,7 +226,7 @@ class TestReadOutput(unittest.TestCase):
         self.assertEqual(len(request.targets), 2)
         self.assertEqual(request.targets[0].agent, "alice")
         self.assertEqual(request.targets[1].agent, "bob")
-        parsed = json.loads(result)
+        parsed = result
         self.assertTrue(parsed["ok"])
 
     def test_read_no_targets_falls_through_to_active_session(self):
@@ -247,7 +247,7 @@ class TestReadOutput(unittest.TestCase):
         # to the active session per its docstring.
         request = call_args.args[0]
         self.assertEqual(list(request.targets), [])
-        parsed = json.loads(result)
+        parsed = result
         self.assertTrue(parsed["ok"])
 
 
@@ -284,7 +284,7 @@ class TestWriteOutput(unittest.TestCase):
         self.assertEqual(request.messages[0].content, "echo hello")
         self.assertEqual(request.messages[0].targets[0].session_id, "abc")
         # Verify the envelope.
-        parsed = json.loads(result)
+        parsed = result
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "SEND")
         self.assertTrue(parsed["ok"])
@@ -345,7 +345,7 @@ class TestWriteOutput(unittest.TestCase):
         self.assertEqual(request.messages[0].content, "echo a")
         self.assertEqual(request.messages[0].targets[0].agent, "alice")
         self.assertEqual(request.messages[1].content, "echo b")
-        parsed = json.loads(result)
+        parsed = result
         self.assertTrue(parsed["ok"])
 
     def test_write_missing_content_and_targets_returns_err(self):
@@ -357,7 +357,7 @@ class TestWriteOutput(unittest.TestCase):
                 target="output",
                 # no content, no messages
             )
-        parsed = json.loads(asyncio.run(go()))
+        parsed = asyncio.run(go())
         self.assertFalse(parsed["ok"])
 
     def test_write_content_without_target_returns_err(self):
@@ -370,16 +370,16 @@ class TestWriteOutput(unittest.TestCase):
                 content="echo hi",
                 # no session_id/agent/name/team
             )
-        parsed = json.loads(asyncio.run(go()))
+        parsed = asyncio.run(go())
         self.assertFalse(parsed["ok"])
         self.assertIn("requires", parsed["error"]["message"].lower())
 
 
 class TestPostWithUnsupportedDefiner(unittest.TestCase):
     def test_post_invoke_not_yet_implemented(self):
-        parsed = json.loads(asyncio.run(
+        parsed = asyncio.run(
             sessions(ctx=_make_ctx(), op="POST", definer="INVOKE")
-        ))
+        )
         self.assertFalse(parsed["ok"])
         # Dispatcher converts NotImplementedError into a generic err envelope.
         self.assertIn("not implemented", parsed["error"]["message"].lower())
@@ -387,9 +387,9 @@ class TestPostWithUnsupportedDefiner(unittest.TestCase):
     def test_post_send_without_target_not_yet_implemented(self):
         # SEND without target='output' is reserved for future sub-resources
         # (e.g. POST+SEND on cascade). Should be NotImplemented for now.
-        parsed = json.loads(asyncio.run(
+        parsed = asyncio.run(
             sessions(ctx=_make_ctx(), op="POST", definer="SEND")
-        ))
+        )
         self.assertFalse(parsed["ok"])
         self.assertIn("not implemented", parsed["error"]["message"].lower())
 
@@ -398,7 +398,7 @@ class TestOptionsAdvertisesOutputAndSend(unittest.TestCase):
     def test_options_lists_send_definer(self):
         async def go():
             return await sessions(ctx=_make_ctx(), op="OPTIONS")
-        parsed = json.loads(asyncio.run(go()))
+        parsed = asyncio.run(go())
         post = parsed["data"]["methods"]["POST"]
         self.assertIn("SEND", post["definers"])
         # GET method should advertise the new params.
@@ -425,7 +425,7 @@ class TestSendKeys(unittest.TestCase):
                 )
 
         result = asyncio.run(go())
-        parsed = json.loads(result)
+        parsed = result
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "SEND")
         self.assertTrue(parsed["ok"])
@@ -450,22 +450,22 @@ class TestSendKeys(unittest.TestCase):
                     session_id="sid",
                 )
 
-        parsed = json.loads(asyncio.run(go()))
+        parsed = asyncio.run(go())
         self.assertTrue(parsed["ok"])
         mock_session.send_special_key.assert_awaited_once_with("enter")
 
     def test_send_keys_both_control_and_key_rejected(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(), op="send", target="keys",
             control_char="C", key="enter", session_id="sid",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("either", parsed["error"]["message"].lower())
 
     def test_send_keys_missing_both_rejected(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(), op="send", target="keys", session_id="sid",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("requires", parsed["error"]["message"].lower())
 
@@ -481,7 +481,7 @@ class TestSendKeys(unittest.TestCase):
                     session_id="nonexistent",
                 )
 
-        parsed = json.loads(asyncio.run(go()))
+        parsed = asyncio.run(go())
         self.assertFalse(parsed["ok"])
         self.assertIn("no matching session", parsed["error"]["message"].lower())
 
@@ -497,27 +497,27 @@ class TestPatchDefinerValidation(unittest.TestCase):
     def test_patch_append_on_roles_rejected(self):
         # APPEND is tags-only; roles should reject it rather than silently
         # execute as MODIFY.
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(role_manager=MagicMock()),
             op="append", target="roles", session_id="sid", role="builder",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("APPEND", parsed["error"]["message"])
 
     def test_patch_append_on_locks_rejected(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=MagicMock()),
             op="append", target="locks",
             session_id="sid", agent="alice", action="lock",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("APPEND", parsed["error"]["message"])
 
     def test_patch_append_on_session_rejected(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(),
             op="append", session_id="sid",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("APPEND", parsed["error"]["message"])
 
@@ -525,10 +525,10 @@ class TestPatchDefinerValidation(unittest.TestCase):
         # Sanity: APPEND *is* valid on tags.
         lock_manager = MagicMock()
         lock_manager.set_tags.return_value = ["x"]
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=lock_manager),
             op="append", target="tags", session_id="sid", tags=["x"],
-        )))
+        ))
         self.assertTrue(parsed["ok"])
 
 
@@ -536,10 +536,10 @@ class TestPatchTags(unittest.TestCase):
     def test_patch_tags_replaces(self):
         lock_manager = MagicMock()
         lock_manager.set_tags.return_value = ["x", "y"]
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=lock_manager),
             op="update", target="tags", session_id="sid", tags=["x", "y"],
-        )))
+        ))
         self.assertEqual(parsed["method"], "PATCH")
         self.assertEqual(parsed["definer"], "MODIFY")
         self.assertTrue(parsed["ok"])
@@ -548,26 +548,26 @@ class TestPatchTags(unittest.TestCase):
     def test_patch_tags_append(self):
         lock_manager = MagicMock()
         lock_manager.set_tags.return_value = ["a", "b", "x"]
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=lock_manager),
             op="append", target="tags", session_id="sid", tags=["x"],
-        )))
+        ))
         self.assertEqual(parsed["definer"], "APPEND")
         self.assertTrue(parsed["ok"])
         lock_manager.set_tags.assert_called_once_with("sid", ["x"], append=True)
 
     def test_patch_tags_missing_session_id(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=MagicMock()),
             op="update", target="tags", tags=["x"],
-        )))
+        ))
         self.assertFalse(parsed["ok"])
 
     def test_patch_tags_missing_tags(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=MagicMock()),
             op="update", target="tags", session_id="sid",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("tags", parsed["error"]["message"].lower())
 
@@ -576,10 +576,10 @@ class TestPatchActive(unittest.TestCase):
     def test_focus_session(self):
         terminal = MagicMock()
         terminal.focus_session = AsyncMock()
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(terminal=terminal),
             op="update", target="active", session_id="sid", focus=True,
-        )))
+        ))
         self.assertEqual(parsed["method"], "PATCH")
         self.assertTrue(parsed["ok"])
         terminal.focus_session.assert_awaited_once_with("sid")
@@ -587,10 +587,10 @@ class TestPatchActive(unittest.TestCase):
     def test_focus_without_flag_not_yet_implemented(self):
         # Only focus=true is supported in 4d. Plain PATCH on active session
         # without focus=true should surface NotImplemented.
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(),
             op="update", target="active", session_id="sid",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not implemented", parsed["error"]["message"].lower())
 
@@ -599,10 +599,10 @@ class TestPatchRoles(unittest.TestCase):
     def test_assign_role(self):
         from core.models import SessionRole
         role_manager = MagicMock()
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(role_manager=role_manager),
             op="assign", target="roles", session_id="sid", role="builder",
-        )))
+        ))
         self.assertEqual(parsed["method"], "PATCH")
         self.assertTrue(parsed["ok"])
         # Role string coerced to the SessionRole enum before calling the manager.
@@ -611,18 +611,18 @@ class TestPatchRoles(unittest.TestCase):
         )
 
     def test_assign_role_missing_role(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(role_manager=MagicMock()),
             op="assign", target="roles", session_id="sid",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("role", parsed["error"]["message"].lower())
 
     def test_assign_role_unknown_value(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(role_manager=MagicMock()),
             op="assign", target="roles", session_id="sid", role="nonsense",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
 
 
@@ -630,10 +630,10 @@ class TestDeleteRole(unittest.TestCase):
     def test_delete_role(self):
         role_manager = MagicMock()
         role_manager.remove_role.return_value = True
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(role_manager=role_manager),
             op="delete", target="roles", session_id="sid",
-        )))
+        ))
         self.assertEqual(parsed["method"], "DELETE")
         self.assertTrue(parsed["ok"])
         self.assertTrue(parsed["data"]["removed"])
@@ -645,10 +645,10 @@ class TestPatchLocks(unittest.TestCase):
     def test_lock_session(self):
         lock_manager = MagicMock()
         lock_manager.lock_session.return_value = (True, "agent1")
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=lock_manager),
             op="update", target="locks", session_id="sid", agent="agent1", action="lock",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertTrue(parsed["data"]["acquired"])
         self.assertEqual(parsed["data"]["owner"], "agent1")
@@ -657,36 +657,36 @@ class TestPatchLocks(unittest.TestCase):
         # When `action` is omitted, it defaults to "lock".
         lock_manager = MagicMock()
         lock_manager.lock_session.return_value = (True, "agent1")
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=lock_manager),
             op="update", target="locks", session_id="sid", agent="agent1",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         lock_manager.lock_session.assert_called_once_with("sid", "agent1")
 
     def test_request_access(self):
         lock_manager = MagicMock()
         lock_manager.check_permission.return_value = (True, "agent1")
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=lock_manager),
             op="update", target="locks", session_id="sid", agent="agent1", action="request_access",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertTrue(parsed["data"]["allowed"])
 
     def test_patch_locks_missing_agent(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=MagicMock()),
             op="update", target="locks", session_id="sid",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("agent", parsed["error"]["message"].lower())
 
     def test_patch_locks_bad_action(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=MagicMock()),
             op="update", target="locks", session_id="sid", agent="a", action="bogus",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("unknown action", parsed["error"]["message"].lower())
 
@@ -695,26 +695,26 @@ class TestDeleteLock(unittest.TestCase):
     def test_unlock(self):
         lock_manager = MagicMock()
         lock_manager.unlock_session.return_value = True
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=lock_manager),
             op="unlock", target="locks", session_id="sid", agent="agent1",
-        )))
+        ))
         self.assertEqual(parsed["method"], "DELETE")
         self.assertTrue(parsed["ok"])
         self.assertTrue(parsed["data"]["unlocked"])
 
     def test_delete_locks_missing_agent(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(lock_manager=MagicMock()),
             op="delete", target="locks", session_id="sid",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("agent", parsed["error"]["message"].lower())
 
 
 class TestOptionsAdvertisesPatchAndDelete(unittest.TestCase):
     def test_options_lists_patch_definers_and_delete(self):
-        parsed = json.loads(asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS"))
         methods = parsed["data"]["methods"]
         self.assertIn("PATCH", methods)
         self.assertIn("MODIFY", methods["PATCH"]["definers"])
@@ -753,7 +753,7 @@ class TestGetStatus(unittest.TestCase):
                     op="GET", target="status", session_id="sid",
                 )
 
-        parsed = json.loads(asyncio.run(go()))
+        parsed = asyncio.run(go())
         self.assertEqual(parsed["method"], "GET")
         self.assertTrue(parsed["ok"])
         # data is a list of status dicts.
@@ -764,9 +764,9 @@ class TestGetStatus(unittest.TestCase):
         self.assertFalse(status["is_monitoring"])
 
     def test_get_status_no_target_info(self):
-        parsed = json.loads(asyncio.run(
+        parsed = asyncio.run(
             sessions(ctx=_make_ctx(), op="GET", target="status")
-        ))
+        )
         self.assertFalse(parsed["ok"])
         self.assertIn("requires", parsed["error"]["message"].lower())
 
@@ -779,7 +779,7 @@ class TestGetStatus(unittest.TestCase):
                     op="GET", target="status", session_id="missing",
                 )
 
-        parsed = json.loads(asyncio.run(go()))
+        parsed = asyncio.run(go())
         self.assertFalse(parsed["ok"])
         self.assertIn("no matching session", parsed["error"]["message"].lower())
 
@@ -805,7 +805,7 @@ class TestStartMonitoring(unittest.TestCase):
 
         count, call_args, result = asyncio.run(go())
         self.assertEqual(count, 1)
-        parsed = json.loads(result)
+        parsed = result
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "TRIGGER")
         self.assertTrue(parsed["ok"])
@@ -815,10 +815,10 @@ class TestStartMonitoring(unittest.TestCase):
         self.assertIs(call_args.args[0], session)
 
     def test_start_monitoring_no_target_info(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(event_bus=MagicMock()),
             op="start", target="monitoring",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("requires", parsed["error"]["message"].lower())
 
@@ -831,7 +831,7 @@ class TestStartMonitoring(unittest.TestCase):
                     op="start", target="monitoring", session_id="missing",
                 )
 
-        parsed = json.loads(asyncio.run(go()))
+        parsed = asyncio.run(go())
         self.assertFalse(parsed["ok"])
         self.assertIn("no matching session", parsed["error"]["message"].lower())
 
@@ -856,16 +856,16 @@ class TestStopMonitoring(unittest.TestCase):
 
         count, result = asyncio.run(go())
         self.assertEqual(count, 1)
-        parsed = json.loads(result)
+        parsed = result
         self.assertEqual(parsed["method"], "DELETE")
         self.assertTrue(parsed["ok"])
         self.assertTrue(parsed["data"]["monitoring"][0]["stopped"])
 
     def test_stop_monitoring_no_target_info(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(),
             op="stop", target="monitoring",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("requires", parsed["error"]["message"].lower())
 
@@ -897,7 +897,7 @@ class TestCreateSplit(unittest.TestCase):
                 return mock_split.call_args, result
 
         call_args, result = asyncio.run(go())
-        parsed = json.loads(result)
+        parsed = result
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "CREATE")
         self.assertTrue(parsed["ok"])
@@ -908,10 +908,10 @@ class TestCreateSplit(unittest.TestCase):
         self.assertEqual(split_request.direction, "below")
 
     def test_create_split_missing_session_id(self):
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(role_manager=MagicMock()),
             op="POST", definer="CREATE", target="splits", direction="below",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("session_id", parsed["error"]["message"].lower())
 
@@ -952,7 +952,7 @@ class TestPatchAppearance(unittest.TestCase):
 
         count, call_args, result = asyncio.run(go())
         self.assertEqual(count, 1)
-        parsed = json.loads(result)
+        parsed = result
         self.assertEqual(parsed["method"], "PATCH")
         self.assertEqual(parsed["definer"], "MODIFY")
         self.assertTrue(parsed["ok"])
@@ -996,11 +996,11 @@ class TestPatchAppearance(unittest.TestCase):
     def test_patch_appearance_no_fields_returns_err(self):
         # Plain PATCH with no target and no modifications should still fail
         # with the Task 4d "not implemented" error so we don't no-op silently.
-        parsed = json.loads(asyncio.run(sessions(
+        parsed = asyncio.run(sessions(
             ctx=_make_ctx(),
             op="PATCH", definer="MODIFY",
             session_id="sid",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
 
 
@@ -1039,7 +1039,7 @@ class TestCreateSessionsDefaults(unittest.TestCase):
                 return mock_exec.call_args, result
 
         call_args, result = asyncio.run(go())
-        parsed = json.loads(result)
+        parsed = result
         self.assertTrue(
             parsed["ok"],
             f"Expected ok envelope, got error: {parsed.get('error')!r}",
@@ -1051,7 +1051,7 @@ class TestCreateSessionsDefaults(unittest.TestCase):
 
     def test_options_schema_advertises_from_end(self):
         """OPTIONS GET advertises from_end? for output reads (fb #3)."""
-        parsed = json.loads(asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS"))
         get_params = parsed["data"]["methods"]["GET"]["params"]
         from_end_entries = [p for p in get_params if p.startswith("from_end")]
         self.assertEqual(
@@ -1063,7 +1063,7 @@ class TestCreateSessionsDefaults(unittest.TestCase):
 
     def test_options_schema_marks_layout_optional(self):
         """OPTIONS must reflect that layout is optional, with its default value."""
-        parsed = json.loads(asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS"))
         create_params = parsed["data"]["methods"]["POST"]["definers"]["CREATE"]["params"]
         layout_entries = [p for p in create_params if p.startswith("layout")]
         self.assertEqual(len(layout_entries), 1, f"expected one layout entry, got {layout_entries}")
@@ -1098,7 +1098,7 @@ class TestCreateSessionsDefaults(unittest.TestCase):
 
 class TestOptionsAdvertises4e(unittest.TestCase):
     def test_options_lists_new_targets_and_verbs(self):
-        parsed = json.loads(asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = asyncio.run(sessions(ctx=_make_ctx(), op="OPTIONS"))
         methods = parsed["data"]["methods"]
         # POST should advertise TRIGGER.
         self.assertIn("TRIGGER", methods["POST"]["definers"])

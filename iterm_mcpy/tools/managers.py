@@ -18,7 +18,7 @@ Note: ``delegate_task`` and ``execute_plan`` (other tools in the legacy
 ``managers`` module) are action tools and are handled by Task 14, not
 this task.
 """
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from mcp.server.fastmcp import Context
 
@@ -331,7 +331,7 @@ async def managers(
     worker_roles: Optional[Dict[str, str]] = None,
     worker_role: Optional[str] = None,
     metadata: Optional[Dict[str, str]] = None,
-) -> str:
+) -> dict[str, Any]:
     """Manager agent management: list, get info, create, remove, add/remove
     workers, HEAD, OPTIONS.
 

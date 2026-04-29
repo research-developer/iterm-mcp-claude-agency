@@ -76,7 +76,7 @@ def _fake_registry(services=None):
 
 class TestOptions(unittest.TestCase):
     def test_options_returns_schema(self):
-        parsed = json.loads(asyncio.run(services(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = asyncio.run(services(ctx=_make_ctx(), op="OPTIONS"))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["collection"], "services")
@@ -88,25 +88,25 @@ class TestOptions(unittest.TestCase):
         self.assertIn("inactive", parsed["data"]["sub_resources"])
 
     def test_options_lists_post_definers(self):
-        parsed = json.loads(asyncio.run(services(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = asyncio.run(services(ctx=_make_ctx(), op="OPTIONS"))
         post = parsed["data"]["methods"]["POST"]
         self.assertIn("CREATE", post["definers"])
         self.assertIn("TRIGGER", post["definers"])
 
     def test_options_lists_patch_definers(self):
-        parsed = json.loads(asyncio.run(services(ctx=_make_ctx(), op="OPTIONS")))
+        parsed = asyncio.run(services(ctx=_make_ctx(), op="OPTIONS"))
         patch_meta = parsed["data"]["methods"]["PATCH"]
         self.assertIn("MODIFY", patch_meta["definers"])
 
     def test_schema_verb_works(self):
-        parsed = json.loads(asyncio.run(services(ctx=_make_ctx(), op="schema")))
+        parsed = asyncio.run(services(ctx=_make_ctx(), op="schema"))
         self.assertEqual(parsed["method"], "OPTIONS")
         self.assertTrue(parsed["ok"])
 
 
 class TestUnknownOp(unittest.TestCase):
     def test_bad_verb_returns_err_envelope(self):
-        parsed = json.loads(asyncio.run(services(ctx=_make_ctx(), op="frobnicate")))
+        parsed = asyncio.run(services(ctx=_make_ctx(), op="frobnicate"))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"]["message"])
 
@@ -114,9 +114,9 @@ class TestUnknownOp(unittest.TestCase):
 class TestWrongDefiner(unittest.TestCase):
     def test_post_replace_rejected(self):
         # REPLACE belongs to the PUT family, not POST.
-        parsed = json.loads(asyncio.run(
+        parsed = asyncio.run(
             services(ctx=_make_ctx(), op="POST", definer="REPLACE")
-        ))
+        )
         self.assertFalse(parsed["ok"])
         self.assertIn("not in POST family", parsed["error"]["message"])
 
@@ -136,10 +136,10 @@ class TestList(unittest.TestCase):
         ])
         sm.check_service_running = AsyncMock(return_value=False)
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="list",
-        )))
+        ))
         self.assertEqual(parsed["method"], "GET")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["count"], 2)
@@ -161,11 +161,11 @@ class TestList(unittest.TestCase):
         ]
         sm.check_service_running = AsyncMock(return_value=True)
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="list",
             repo_path="/repo",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["count"], 1)
         self.assertEqual(parsed["data"]["services"][0]["name"], "db")
@@ -180,11 +180,11 @@ class TestList(unittest.TestCase):
         ])
         sm.check_service_running = AsyncMock(return_value=False)
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="list",
             include_status=False,
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         # is_running field should NOT be present when include_status=False.
         self.assertNotIn("is_running", parsed["data"]["services"][0])
@@ -215,11 +215,11 @@ class TestList(unittest.TestCase):
         ])
         sm.check_service_running = AsyncMock(return_value=False)
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="list",
             min_priority="preferred",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         # Only 'api' (required) should pass the preferred+ filter.
         self.assertEqual(parsed["data"]["count"], 1)
@@ -229,10 +229,10 @@ class TestList(unittest.TestCase):
         sm = MagicMock()
         sm.load_global_config.return_value = _fake_registry(services=[])
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="list",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["count"], 0)
         self.assertEqual(parsed["data"]["services"], [])
@@ -243,10 +243,10 @@ class TestHead(unittest.TestCase):
         sm = MagicMock()
         sm.load_global_config.return_value = _fake_registry(services=[])
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="HEAD",
-        )))
+        ))
         self.assertEqual(parsed["method"], "HEAD")
         self.assertTrue(parsed["ok"])
 
@@ -264,11 +264,11 @@ class TestListInactive(unittest.TestCase):
             _fake_service(name="cache", priority_value="preferred", command="redis"),
         ])
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="GET", target="inactive",
             repo_path="/repo",
-        )))
+        ))
         self.assertEqual(parsed["method"], "GET")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["count"], 2)
@@ -282,20 +282,20 @@ class TestListInactive(unittest.TestCase):
         sm = MagicMock()
         sm.get_inactive_services = AsyncMock(return_value=[])
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="list_inactive",
             repo_path="/repo",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["method"], "GET")
         self.assertEqual(parsed["data"]["count"], 0)
 
     def test_list_inactive_missing_repo_path_returns_err(self):
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(),
             op="GET", target="inactive",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("repo_path", parsed["error"]["message"].lower())
 
@@ -305,12 +305,12 @@ class TestListInactive(unittest.TestCase):
         sm = MagicMock()
         sm.get_inactive_services = AsyncMock(return_value=[])
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="list_inactive",
             repo_path="/repo",
             min_priority="preferred",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         # min_priority should have been converted to ServicePriority and passed through.
         args, kwargs = sm.get_inactive_services.call_args
@@ -329,14 +329,14 @@ class TestAdd(unittest.TestCase):
         registry = _fake_registry(services=[])
         sm.load_global_config.return_value = registry
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="add",
             service_name="api",
             command="uvicorn api:app",
             priority="required",
             port=8000,
-        )))
+        ))
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "CREATE")
         self.assertTrue(parsed["ok"])
@@ -353,12 +353,12 @@ class TestAdd(unittest.TestCase):
         sm = MagicMock()
         sm.load_global_config.return_value = _fake_registry(services=[])
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="POST", definer="CREATE",
             service_name="api",
             command="uvicorn api:app",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["definer"], "CREATE")
         # priority defaults to 'optional' when unspecified.
@@ -369,14 +369,14 @@ class TestAdd(unittest.TestCase):
         registry = _fake_registry(services=[])
         sm.load_repo_config.return_value = registry
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="add",
             service_name="db",
             command="postgres",
             scope="repo",
             repo_path="/repo",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["scope"], "repo")
         sm.save_repo_config.assert_called_once_with("/repo", registry)
@@ -392,12 +392,12 @@ class TestAdd(unittest.TestCase):
         registry = _fake_registry(services=[existing])
         sm.load_global_config.return_value = registry
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="add",
             service_name="api",
             command="new-cmd",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         # Replacement should leave exactly one entry with the new command.
         self.assertEqual(len(registry.services), 1)
@@ -405,31 +405,31 @@ class TestAdd(unittest.TestCase):
         self.assertEqual(registry.services[0].command, "new-cmd")
 
     def test_add_missing_service_name_returns_err(self):
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(),
             op="add",
             command="run",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("service_name", parsed["error"]["message"].lower())
 
     def test_add_missing_command_returns_err(self):
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(),
             op="add",
             service_name="api",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("command", parsed["error"]["message"].lower())
 
     def test_add_repo_scope_without_repo_path_returns_err(self):
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(),
             op="add",
             service_name="api",
             command="run",
             scope="repo",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("repo_path", parsed["error"]["message"].lower())
 
@@ -448,11 +448,11 @@ class TestStart(unittest.TestCase):
             is_running=True, session_id="s-1",
         ))
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="start",
             service_name="api",
-        )))
+        ))
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "TRIGGER")
         self.assertTrue(parsed["ok"])
@@ -467,11 +467,11 @@ class TestStart(unittest.TestCase):
         sm.load_global_config.return_value = _fake_registry(services=[svc])
         sm.start_service = AsyncMock(return_value=_fake_service_state())
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="POST", definer="TRIGGER",
             service_name="api",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["definer"], "TRIGGER")
 
@@ -481,12 +481,12 @@ class TestStart(unittest.TestCase):
         sm.get_merged_services.return_value = [svc]
         sm.start_service = AsyncMock(return_value=_fake_service_state())
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="start",
             service_name="db",
             repo_path="/repo",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         sm.get_merged_services.assert_called_once_with("/repo")
         sm.load_global_config.assert_not_called()
@@ -497,11 +497,11 @@ class TestStart(unittest.TestCase):
             _fake_service(name="other"),
         ])
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="start",
             service_name="missing",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("missing", parsed["error"]["message"])
         # The error should include the available services.
@@ -515,11 +515,11 @@ class TestStart(unittest.TestCase):
             is_running=False, session_id=None, error_message="port in use",
         ))
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="start",
             service_name="api",
-        )))
+        ))
         # Envelope is ok=true (handler completed); the data payload reports
         # started=false and the error_message. This mirrors legacy behavior.
         self.assertTrue(parsed["ok"])
@@ -527,10 +527,10 @@ class TestStart(unittest.TestCase):
         self.assertEqual(parsed["data"]["error"], "port in use")
 
     def test_start_missing_service_name_returns_err(self):
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(),
             op="start",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("service_name", parsed["error"]["message"].lower())
 
@@ -551,14 +551,14 @@ class TestConfigure(unittest.TestCase):
         registry = _fake_registry(services=[existing])
         sm.load_global_config.return_value = registry
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="configure",
             service_name="api",
             priority="required",
             port=8080,
             command="new-cmd",
-        )))
+        ))
         self.assertEqual(parsed["method"], "PATCH")
         self.assertEqual(parsed["definer"], "MODIFY")
         self.assertTrue(parsed["ok"])
@@ -581,12 +581,12 @@ class TestConfigure(unittest.TestCase):
         sm = MagicMock()
         sm.load_global_config.return_value = _fake_registry(services=[existing])
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="PATCH", definer="MODIFY",
             service_name="api",
             priority="preferred",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["definer"], "MODIFY")
 
@@ -598,14 +598,14 @@ class TestConfigure(unittest.TestCase):
         registry = _fake_registry(services=[existing])
         sm.load_repo_config.return_value = registry
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="configure",
             service_name="db",
             command="postgres --new-flag",
             scope="repo",
             repo_path="/repo",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["scope"], "repo")
         sm.save_repo_config.assert_called_once_with("/repo", registry)
@@ -615,33 +615,33 @@ class TestConfigure(unittest.TestCase):
         sm = MagicMock()
         sm.load_global_config.return_value = _fake_registry(services=[])
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="configure",
             service_name="missing",
             priority="required",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("missing", parsed["error"]["message"])
         # Must not have saved anything.
         sm.save_global_config.assert_not_called()
 
     def test_configure_missing_service_name_returns_err(self):
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(),
             op="configure",
             priority="required",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("service_name", parsed["error"]["message"].lower())
 
     def test_configure_repo_scope_without_repo_path_returns_err(self):
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(),
             op="configure",
             service_name="api",
             scope="repo",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("repo_path", parsed["error"]["message"].lower())
 
@@ -656,11 +656,11 @@ class TestStop(unittest.TestCase):
         sm = MagicMock()
         sm.stop_service = AsyncMock(return_value=True)
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="stop",
             service_name="api",
-        )))
+        ))
         self.assertEqual(parsed["method"], "DELETE")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["service"], "api")
@@ -671,11 +671,11 @@ class TestStop(unittest.TestCase):
         sm = MagicMock()
         sm.stop_service = AsyncMock(return_value=True)
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="DELETE",
             service_name="api",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertTrue(parsed["data"]["stopped"])
 
@@ -683,20 +683,20 @@ class TestStop(unittest.TestCase):
         sm = MagicMock()
         sm.stop_service = AsyncMock(return_value=False)
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="stop",
             service_name="api",
-        )))
+        ))
         # Envelope is ok=true (handler completed); data reports stopped=false.
         self.assertTrue(parsed["ok"])
         self.assertFalse(parsed["data"]["stopped"])
 
     def test_stop_missing_service_name_returns_err(self):
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(),
             op="stop",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("service_name", parsed["error"]["message"].lower())
 
@@ -708,30 +708,30 @@ class TestStop(unittest.TestCase):
 
 class TestUnsupportedCombinations(unittest.TestCase):
     def test_post_send_not_implemented(self):
-        parsed = json.loads(asyncio.run(
+        parsed = asyncio.run(
             services(ctx=_make_ctx(), op="POST", definer="SEND")
-        ))
+        )
         self.assertFalse(parsed["ok"])
         self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_post_invoke_not_implemented(self):
-        parsed = json.loads(asyncio.run(
+        parsed = asyncio.run(
             services(ctx=_make_ctx(), op="POST", definer="INVOKE")
-        ))
+        )
         self.assertFalse(parsed["ok"])
         self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_patch_rename_not_implemented(self):
-        parsed = json.loads(asyncio.run(
+        parsed = asyncio.run(
             services(ctx=_make_ctx(), op="PATCH", definer="RENAME")
-        ))
+        )
         self.assertFalse(parsed["ok"])
         self.assertIn("not", parsed["error"]["message"].lower())
 
     def test_put_not_implemented(self):
-        parsed = json.loads(asyncio.run(
+        parsed = asyncio.run(
             services(ctx=_make_ctx(), op="PUT", definer="REPLACE")
-        ))
+        )
         self.assertFalse(parsed["ok"])
         self.assertIn("not implemented", parsed["error"]["message"].lower())
 
@@ -751,12 +751,12 @@ class TestLegacyOpInterop(unittest.TestCase):
         sm = MagicMock()
         sm.load_global_config.return_value = _fake_registry(services=[existing])
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="configure",
             service_name="api",
             priority="required",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["method"], "PATCH")
         self.assertEqual(parsed["definer"], "MODIFY")
@@ -765,11 +765,11 @@ class TestLegacyOpInterop(unittest.TestCase):
         sm = MagicMock()
         sm.get_inactive_services = AsyncMock(return_value=[])
 
-        parsed = json.loads(asyncio.run(services(
+        parsed = asyncio.run(services(
             ctx=_make_ctx(service_manager=sm),
             op="list_inactive",
             repo_path="/repo",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["method"], "GET")
 

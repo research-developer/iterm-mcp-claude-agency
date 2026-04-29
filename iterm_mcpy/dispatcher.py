@@ -83,7 +83,7 @@ class MethodDispatcher:
         op: str,
         definer: Optional[str] = None,
         **params,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Entry point invoked by the MCP tool wrapper.
 
         Args:

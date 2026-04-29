@@ -64,11 +64,11 @@ class TestMessagesV2(unittest.TestCase):
             "iterm_mcpy.tools.messages.execute_cascade_request",
             side_effect=fake_cascade,
         ):
-            parsed = json.loads(asyncio.run(messages(
+            parsed = asyncio.run(messages(
                 ctx=_make_ctx(),
                 op="send",
                 cascade={"broadcast": "hello"},
-            )))
+            ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "SEND")
@@ -76,46 +76,46 @@ class TestMessagesV2(unittest.TestCase):
 
     def test_wrong_op_returns_err(self):
         # GET is the wrong family for messages.
-        parsed = json.loads(asyncio.run(messages(
+        parsed = asyncio.run(messages(
             ctx=_make_ctx(),
             op="GET",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("POST+SEND", parsed["error"]["message"])
 
     def test_wrong_definer_returns_err(self):
         # CREATE is a valid POST definer but not what messages supports.
-        parsed = json.loads(asyncio.run(messages(
+        parsed = asyncio.run(messages(
             ctx=_make_ctx(),
             op="POST", definer="CREATE",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("POST+SEND", parsed["error"]["message"])
 
     def test_unknown_verb_returns_err(self):
-        parsed = json.loads(asyncio.run(messages(
+        parsed = asyncio.run(messages(
             ctx=_make_ctx(),
             op="frobnicate",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"]["message"])
 
     def test_missing_cascade_and_targets_returns_err(self):
-        parsed = json.loads(asyncio.run(messages(
+        parsed = asyncio.run(messages(
             ctx=_make_ctx(),
             op="send",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("cascade", parsed["error"]["message"].lower())
         self.assertIn("targets", parsed["error"]["message"].lower())
 
     def test_both_cascade_and_targets_returns_err(self):
-        parsed = json.loads(asyncio.run(messages(
+        parsed = asyncio.run(messages(
             ctx=_make_ctx(),
             op="send",
             cascade={"broadcast": "hi"},
             targets=[{"agent": "alice"}],
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("not both", parsed["error"]["message"].lower())
 
@@ -133,11 +133,11 @@ class TestOrchestrateV2(unittest.TestCase):
         )
 
     def test_happy_path_empty_playbook(self):
-        parsed = json.loads(asyncio.run(orchestrate(
+        parsed = asyncio.run(orchestrate(
             ctx=self._ctx(),
             op="invoke",
             playbook={},  # no layout/commands/cascade/reads
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "INVOKE")
@@ -156,7 +156,7 @@ class TestOrchestrateV2(unittest.TestCase):
             "iterm_mcpy.tools.orchestrate.execute_write_request",
             side_effect=fake_write,
         ):
-            parsed = json.loads(asyncio.run(orchestrate(
+            parsed = asyncio.run(orchestrate(
                 ctx=self._ctx(),
                 op="POST", definer="INVOKE",
                 playbook={
@@ -172,32 +172,32 @@ class TestOrchestrateV2(unittest.TestCase):
                         },
                     ],
                 },
-            )))
+            ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(len(parsed["data"]["commands"]), 1)
         self.assertEqual(parsed["data"]["commands"][0]["name"], "step1")
 
     def test_wrong_op_returns_err(self):
-        parsed = json.loads(asyncio.run(orchestrate(
+        parsed = asyncio.run(orchestrate(
             ctx=self._ctx(),
             op="GET",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("POST+INVOKE", parsed["error"]["message"])
 
     def test_unknown_verb_returns_err(self):
-        parsed = json.loads(asyncio.run(orchestrate(
+        parsed = asyncio.run(orchestrate(
             ctx=self._ctx(),
             op="frobnicate",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"]["message"])
 
     def test_missing_playbook_returns_err(self):
-        parsed = json.loads(asyncio.run(orchestrate(
+        parsed = asyncio.run(orchestrate(
             ctx=self._ctx(),
             op="invoke",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("playbook", parsed["error"]["message"].lower())
 
@@ -232,13 +232,13 @@ class TestDelegateV2(unittest.TestCase):
 
         # Also patch _setup_manager_callbacks (it's fine as a no-op here).
         with patch("iterm_mcpy.tools.delegate._setup_manager_callbacks"):
-            parsed = json.loads(asyncio.run(delegate(
+            parsed = asyncio.run(delegate(
                 ctx=self._ctx(manager_registry=manager_registry),
                 op="delegate",
                 target="task",
                 manager_name="mgr1",
                 task="echo hi",
-            )))
+            ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "INVOKE")
@@ -246,12 +246,12 @@ class TestDelegateV2(unittest.TestCase):
         self.assertEqual(parsed["data"]["worker"], "alice")
 
     def test_task_missing_manager_returns_err(self):
-        parsed = json.loads(asyncio.run(delegate(
+        parsed = asyncio.run(delegate(
             ctx=self._ctx(),
             op="delegate",
             target="task",
             task="echo hi",  # manager_name missing
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("manager_name", parsed["error"]["message"])
 
@@ -259,13 +259,13 @@ class TestDelegateV2(unittest.TestCase):
         manager_registry = MagicMock()
         manager_registry.get_manager.return_value = None
 
-        parsed = json.loads(asyncio.run(delegate(
+        parsed = asyncio.run(delegate(
             ctx=self._ctx(manager_registry=manager_registry),
             op="delegate",
             target="task",
             manager_name="ghost",
             task="echo hi",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("ghost", parsed["error"]["message"])
         self.assertIn("not found", parsed["error"]["message"].lower())
@@ -284,7 +284,7 @@ class TestDelegateV2(unittest.TestCase):
         manager_registry.get_manager.return_value = manager
 
         with patch("iterm_mcpy.tools.delegate._setup_manager_callbacks"):
-            parsed = json.loads(asyncio.run(delegate(
+            parsed = asyncio.run(delegate(
                 ctx=self._ctx(manager_registry=manager_registry),
                 op="POST", definer="INVOKE",
                 target="plan",
@@ -295,34 +295,34 @@ class TestDelegateV2(unittest.TestCase):
                         {"id": "s1", "task": "echo hello"},
                     ],
                 },
-            )))
+            ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["plan_name"], "p1")
 
     def test_plan_missing_plan_returns_err(self):
-        parsed = json.loads(asyncio.run(delegate(
+        parsed = asyncio.run(delegate(
             ctx=self._ctx(),
             op="delegate",
             target="plan",
             manager_name="mgr1",  # plan missing
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("plan", parsed["error"]["message"].lower())
 
     def test_bad_target_returns_err(self):
-        parsed = json.loads(asyncio.run(delegate(
+        parsed = asyncio.run(delegate(
             ctx=self._ctx(),
             op="delegate",
             target="mystery",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("target must be", parsed["error"]["message"])
 
     def test_wrong_op_returns_err(self):
-        parsed = json.loads(asyncio.run(delegate(
+        parsed = asyncio.run(delegate(
             ctx=self._ctx(),
             op="GET",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("POST+INVOKE", parsed["error"]["message"])
 
@@ -349,7 +349,7 @@ class TestWaitForV2(unittest.TestCase):
         notification_manager = MagicMock()
         notification_manager.add_simple = AsyncMock()
 
-        parsed = json.loads(asyncio.run(wait_for(
+        parsed = asyncio.run(wait_for(
             ctx=_make_ctx(
                 agent_registry=agent_registry,
                 terminal=terminal,
@@ -358,7 +358,7 @@ class TestWaitForV2(unittest.TestCase):
             op="GET",
             agent_name="alice",
             wait_up_to=5,
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["method"], "GET")
         self.assertTrue(parsed["data"]["completed"])
@@ -368,48 +368,48 @@ class TestWaitForV2(unittest.TestCase):
         agent_registry = MagicMock()
         agent_registry.get_agent.return_value = None
 
-        parsed = json.loads(asyncio.run(wait_for(
+        parsed = asyncio.run(wait_for(
             ctx=_make_ctx(agent_registry=agent_registry),
             op="GET",
             agent_name="ghost",
-        )))
+        ))
         self.assertTrue(parsed["ok"])  # envelope is ok; payload carries the error.
         self.assertFalse(parsed["data"]["completed"])
         self.assertEqual(parsed["data"]["status"], "unknown")
         self.assertIn("ghost", parsed["data"]["summary"])
 
     def test_wrong_op_returns_err(self):
-        parsed = json.loads(asyncio.run(wait_for(
+        parsed = asyncio.run(wait_for(
             ctx=_make_ctx(),
             op="POST",
             agent_name="alice",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("GET", parsed["error"]["message"])
 
     def test_missing_agent_name_returns_err(self):
-        parsed = json.loads(asyncio.run(wait_for(
+        parsed = asyncio.run(wait_for(
             ctx=_make_ctx(),
             op="GET",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("agent_name", parsed["error"]["message"])
 
     def test_unknown_verb_returns_err(self):
-        parsed = json.loads(asyncio.run(wait_for(
+        parsed = asyncio.run(wait_for(
             ctx=_make_ctx(),
             op="frobnicate",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"]["message"])
 
     def test_out_of_range_timeout_returns_err(self):
-        parsed = json.loads(asyncio.run(wait_for(
+        parsed = asyncio.run(wait_for(
             ctx=_make_ctx(),
             op="GET",
             agent_name="alice",
             wait_up_to=0,  # below min=1
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("1 and 600", parsed["error"]["message"])
 
@@ -424,12 +424,12 @@ class TestSubscribeV2(unittest.TestCase):
         event_bus = MagicMock()
         event_bus.subscribe_to_pattern = AsyncMock(return_value="sub-123")
 
-        parsed = json.loads(asyncio.run(subscribe(
+        parsed = asyncio.run(subscribe(
             ctx=_make_ctx(event_bus=event_bus),
             op="subscribe",
             pattern=r"error:\s",
             event_name="error_event",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "TRIGGER")
@@ -441,45 +441,45 @@ class TestSubscribeV2(unittest.TestCase):
         event_bus = MagicMock()
         event_bus.subscribe_to_pattern = AsyncMock(return_value="sub-1")
 
-        parsed = json.loads(asyncio.run(subscribe(
+        parsed = asyncio.run(subscribe(
             ctx=_make_ctx(event_bus=event_bus),
             op="POST", definer="TRIGGER",
             pattern="foo",
-        )))
+        ))
         self.assertTrue(parsed["ok"])
 
     def test_wrong_op_returns_err(self):
-        parsed = json.loads(asyncio.run(subscribe(
+        parsed = asyncio.run(subscribe(
             ctx=_make_ctx(),
             op="GET",
             pattern="foo",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("POST+TRIGGER", parsed["error"]["message"])
 
     def test_wrong_definer_returns_err(self):
-        parsed = json.loads(asyncio.run(subscribe(
+        parsed = asyncio.run(subscribe(
             ctx=_make_ctx(),
             op="POST", definer="CREATE",
             pattern="foo",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("POST+TRIGGER", parsed["error"]["message"])
 
     def test_missing_pattern_returns_err(self):
-        parsed = json.loads(asyncio.run(subscribe(
+        parsed = asyncio.run(subscribe(
             ctx=_make_ctx(),
             op="subscribe",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("pattern", parsed["error"]["message"].lower())
 
     def test_bad_regex_returns_err(self):
-        parsed = json.loads(asyncio.run(subscribe(
+        parsed = asyncio.run(subscribe(
             ctx=_make_ctx(),
             op="subscribe",
             pattern="[bad(regex",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("Invalid regex", parsed["error"]["message"])
 
@@ -497,12 +497,12 @@ class TestTelemetryV2(unittest.TestCase):
         )
         # Patch start_dashboard where it's imported — inside _start_dashboard.
         with patch("core.dashboard.start_dashboard", new=AsyncMock(return_value="running on 9999")):
-            parsed = json.loads(asyncio.run(telemetry(
+            parsed = asyncio.run(telemetry(
                 ctx=ctx,
                 op="start",
                 port=9999,
                 duration_seconds=10,
-            )))
+            ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "TRIGGER")
@@ -511,35 +511,35 @@ class TestTelemetryV2(unittest.TestCase):
 
     def test_stop_happy_path(self):
         with patch("core.dashboard.stop_dashboard", new=AsyncMock()):
-            parsed = json.loads(asyncio.run(telemetry(
+            parsed = asyncio.run(telemetry(
                 ctx=_make_ctx(),
                 op="stop",
-            )))
+            ))
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["method"], "DELETE")
         self.assertEqual(parsed["data"]["status"], "stopped")
 
     def test_wrong_definer_returns_err(self):
-        parsed = json.loads(asyncio.run(telemetry(
+        parsed = asyncio.run(telemetry(
             ctx=_make_ctx(),
             op="POST", definer="CREATE",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("TRIGGER", parsed["error"]["message"])
 
     def test_unknown_verb_returns_err(self):
-        parsed = json.loads(asyncio.run(telemetry(
+        parsed = asyncio.run(telemetry(
             ctx=_make_ctx(),
             op="frobnicate",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("Unknown op", parsed["error"]["message"])
 
     def test_patch_not_supported(self):
-        parsed = json.loads(asyncio.run(telemetry(
+        parsed = asyncio.run(telemetry(
             ctx=_make_ctx(),
             op="PATCH", definer="MODIFY",
-        )))
+        ))
         self.assertFalse(parsed["ok"])
         self.assertIn("POST+TRIGGER or DELETE", parsed["error"]["message"])
 

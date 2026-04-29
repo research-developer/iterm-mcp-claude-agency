@@ -91,7 +91,7 @@ class TestErrEnvelopeAcceptsToolError(unittest.TestCase):
             error=ToolError(ErrorCode.INVALID_OP, "Unknown op 'foo'", hint="see OPTIONS"),
             definer="CREATE",
         )
-        parsed = json.loads(env)
+        parsed = env
         self.assertEqual(parsed["method"], "POST")
         self.assertEqual(parsed["definer"], "CREATE")
         self.assertFalse(parsed["ok"])
@@ -105,7 +105,7 @@ class TestErrEnvelopeAcceptsToolError(unittest.TestCase):
         # — the string becomes the `message`, with code=INTERNAL.
         from iterm_mcpy.responses import err_envelope
         env = err_envelope(method="GET", error="something broke")
-        parsed = json.loads(env)
+        parsed = env
         self.assertFalse(parsed["ok"])
         self.assertEqual(parsed["error"]["code"], "internal")
         self.assertEqual(parsed["error"]["message"], "something broke")

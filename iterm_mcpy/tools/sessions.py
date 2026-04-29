@@ -1619,7 +1619,7 @@ async def sessions(
     suspend_by: Optional[str] = None,
     set_active: Optional[bool] = None,
     reset: Optional[bool] = None,
-) -> str:
+) -> dict[str, Any]:
     """Session operations: list, read, write, send keys, create, split, monitor,
     modify, patch, delete, HEAD, OPTIONS.
 

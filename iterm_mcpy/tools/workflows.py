@@ -291,7 +291,7 @@ async def workflows(
     immediate: bool = False,
     limit: int = 100,
     success_only: bool = False,
-) -> str:
+) -> dict[str, Any]:
     """Workflow event bus: list events, trigger events, get event history.
 
     Use op="list" (or op="GET") to list registered workflow events. Returns

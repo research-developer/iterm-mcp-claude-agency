@@ -23,7 +23,7 @@ async def subscribe(
     definer: Optional[str] = None,
     pattern: Optional[str] = None,
     event_name: Optional[str] = None,
-) -> str:
+) -> dict[str, Any]:
     """Subscribe to terminal output matching a regex pattern.
 
     Replaces the legacy ``subscribe_to_output_pattern`` tool. When terminal

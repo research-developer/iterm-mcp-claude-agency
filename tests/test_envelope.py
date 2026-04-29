@@ -24,7 +24,7 @@ class PydanticContainer(BaseModel):
 class TestOkEnvelope(unittest.TestCase):
     def test_basic_shape(self):
         s = ok_envelope(method="GET", data={"count": 3})
-        parsed = json.loads(s)
+        parsed = s
         self.assertEqual(parsed["method"], "GET")
         self.assertTrue(parsed["ok"])
         self.assertEqual(parsed["data"]["count"], 3)
@@ -32,51 +32,51 @@ class TestOkEnvelope(unittest.TestCase):
 
     def test_includes_definer_when_present(self):
         s = ok_envelope(method="POST", definer="CREATE", data={"id": "x"})
-        parsed = json.loads(s)
+        parsed = s
         self.assertEqual(parsed["definer"], "CREATE")
 
     def test_omits_definer_when_none(self):
         s = ok_envelope(method="GET", data={"count": 3})
-        parsed = json.loads(s)
+        parsed = s
         self.assertNotIn("definer", parsed)
 
     def test_serializes_pydantic_model(self):
         item = Item(id="a", name="Alpha", description="full")
         s = ok_envelope(method="GET", data=item)
-        parsed = json.loads(s)
+        parsed = s
         self.assertEqual(parsed["data"]["id"], "a")
         self.assertEqual(parsed["data"]["description"], "full")
 
     def test_serializes_list_of_pydantic_models(self):
         items = [Item(id="a", name="Alpha"), Item(id="b", name="Bravo")]
         s = ok_envelope(method="GET", data=items)
-        parsed = json.loads(s)
+        parsed = s
         self.assertEqual(len(parsed["data"]), 2)
         self.assertEqual(parsed["data"][0]["id"], "a")
 
     def test_excludes_none_from_pydantic(self):
         item = Item(id="a", name="Alpha")  # description is None
         s = ok_envelope(method="GET", data=item)
-        parsed = json.loads(s)
+        parsed = s
         self.assertNotIn("description", parsed["data"])
 
 
 class TestErrEnvelope(unittest.TestCase):
     def test_basic_shape(self):
         s = err_envelope(method="POST", error="boom")
-        parsed = json.loads(s)
+        parsed = s
         self.assertFalse(parsed["ok"])
         self.assertEqual(parsed["error"]["message"], "boom")
         self.assertNotIn("data", parsed)
 
     def test_includes_definer_when_present(self):
         s = err_envelope(method="POST", definer="CREATE", error="boom")
-        parsed = json.loads(s)
+        parsed = s
         self.assertEqual(parsed["definer"], "CREATE")
 
     def test_omits_definer_when_none(self):
         s = err_envelope(method="POST", error="boom")
-        parsed = json.loads(s)
+        parsed = s
         self.assertNotIn("definer", parsed)
 
 
