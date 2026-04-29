@@ -399,19 +399,23 @@ class ItermSession:
 
         for attempt in range(max_attempts):
             await self.session.async_set_name(name)
-            # Verify on the second-and-later attempts, and on the first attempt
-            # when we have more attempts left to use.
-            if attempt + 1 < max_attempts:
-                await asyncio.sleep(retry_delay)
-                if self.session.name == name:
-                    break
-            # Final attempt: don't sleep; if it didn't take, log and move on.
+            # Always sleep and verify after every attempt, including the last.
+            # This ensures iTerm has had a chance to propagate the rename before
+            # we evaluate whether it succeeded (fixes false "did not apply"
+            # warnings caused by reading session.name before iTerm async-applies
+            # the final attempt).
+            await asyncio.sleep(retry_delay)
+            if self.session.name == name:
+                break
 
-        if self.session.name != name and self.logger:
-            # Best-effort warning; don't raise, the wrapper still reports `name`.
-            log = getattr(self.logger, "log_app_event", None)
-            if callable(log):
-                log("NAME_SET_FAILED", f"iterm2 did not apply name {name!r} after {max_attempts} attempts")
+        if self.session.name != name:
+            # Best-effort warning via stdlib logging; ItermSessionLogger does not
+            # expose log_app_event (that method is on ItermLogManager), so we use
+            # the module-level stdlib logger to ensure the warning is always
+            # emitted regardless of which logger object is attached to the session.
+            _logger.warning(
+                "iterm2 did not apply name %r after %d attempt(s)", name, max_attempts
+            )
 
         if self.logger:
             self.logger.log_session_renamed(name)
