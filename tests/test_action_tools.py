@@ -132,6 +132,25 @@ class TestOrchestrateV2(unittest.TestCase):
             profile_manager=MagicMock(),
         )
 
+    def test_options_returns_playbook_schema(self):
+        """fb-20260424-157473f7 #15: OPTIONS embeds the Playbook schema so
+        callers don't need to read the source to know what shape to send."""
+        parsed = asyncio.run(orchestrate(ctx=self._ctx(), op="OPTIONS"))
+        self.assertTrue(parsed["ok"])
+        self.assertEqual(parsed["method"], "OPTIONS")
+        data = parsed["data"]
+        self.assertEqual(data["tool"], "orchestrate")
+        self.assertEqual(data["method"], "POST")
+        self.assertEqual(data["definer"], "INVOKE")
+        # The schema is JSON Schema (Pydantic-emitted).
+        schema = data["playbook_schema"]
+        self.assertIn("properties", schema)
+        # The Playbook model has these top-level fields.
+        self.assertEqual(
+            set(schema["properties"].keys()),
+            {"layout", "commands", "cascade", "reads"},
+        )
+
     def test_happy_path_empty_playbook(self):
         parsed = asyncio.run(orchestrate(
             ctx=self._ctx(),
