@@ -467,27 +467,151 @@ class TestSubscribeV2(unittest.TestCase):
         ))
         self.assertTrue(parsed["ok"])
 
-    def test_wrong_op_returns_err(self):
+    def test_get_lists_active_subscriptions(self):
+        """GET (list) returns the event_bus's active pattern subscriptions."""
+        event_bus = MagicMock()
+        event_bus.list_pattern_subscriptions = MagicMock(return_value=[
+            {"subscription_id": "s1", "pattern": "foo", "event_name": None,
+             "target_session_id": None, "target_agent": None,
+             "notify_agent": None, "created_at": "2026-04-29T00:00:00"},
+        ])
         parsed = asyncio.run(subscribe(
-            ctx=_make_ctx(),
-            op="GET",
-            pattern="foo",
+            ctx=_make_ctx(event_bus=event_bus),
+            op="list",
         ))
-        self.assertFalse(parsed["ok"])
-        self.assertIn("POST+TRIGGER", parsed["error"]["message"])
+        self.assertTrue(parsed["ok"])
+        self.assertEqual(parsed["method"], "GET")
+        self.assertEqual(parsed["data"]["count"], 1)
+        self.assertEqual(parsed["data"]["subscriptions"][0]["subscription_id"], "s1")
 
-    def test_wrong_definer_returns_err(self):
+    def test_delete_cancels_subscription(self):
+        event_bus = MagicMock()
+        event_bus.unsubscribe_from_pattern = AsyncMock(return_value=True)
         parsed = asyncio.run(subscribe(
-            ctx=_make_ctx(),
-            op="POST", definer="CREATE",
-            pattern="foo",
+            ctx=_make_ctx(event_bus=event_bus),
+            op="stop",
+            subscription_id="s1",
+        ))
+        self.assertTrue(parsed["ok"])
+        self.assertEqual(parsed["method"], "DELETE")
+        self.assertTrue(parsed["data"]["cancelled"])
+        event_bus.unsubscribe_from_pattern.assert_awaited_once_with("s1")
+
+    def test_delete_unknown_subscription_returns_err(self):
+        event_bus = MagicMock()
+        event_bus.unsubscribe_from_pattern = AsyncMock(return_value=False)
+        parsed = asyncio.run(subscribe(
+            ctx=_make_ctx(event_bus=event_bus),
+            op="cancel",
+            subscription_id="missing",
         ))
         self.assertFalse(parsed["ok"])
-        self.assertIn("POST+TRIGGER", parsed["error"]["message"])
+        self.assertEqual(parsed["error"]["code"], "session_not_found")
+
+    def test_delete_missing_id_returns_err(self):
+        parsed = asyncio.run(subscribe(
+            ctx=_make_ctx(event_bus=MagicMock()),
+            op="DELETE",
+        ))
+        self.assertFalse(parsed["ok"])
+        self.assertEqual(parsed["error"]["code"], "missing_param")
+
+    def test_options_self_describes(self):
+        parsed = asyncio.run(subscribe(ctx=_make_ctx(), op="OPTIONS"))
+        self.assertTrue(parsed["ok"])
+        self.assertEqual(parsed["method"], "OPTIONS")
+        self.assertEqual(parsed["data"]["tool"], "subscribe")
+        self.assertIn("POST", parsed["data"]["methods"])
+        self.assertIn("GET", parsed["data"]["methods"])
+        self.assertIn("DELETE", parsed["data"]["methods"])
+
+    def test_post_passes_cross_agent_filters_to_event_bus(self):
+        event_bus = MagicMock()
+        event_bus.subscribe_to_pattern = AsyncMock(return_value="sub-cross")
+        parsed = asyncio.run(subscribe(
+            ctx=_make_ctx(event_bus=event_bus),
+            op="subscribe",
+            pattern="WARN",
+            target_session_id="s-other",
+            target_agent="alice",
+            notify_agent="watcher",
+        ))
+        self.assertTrue(parsed["ok"])
+        # Verify the event_bus call carries all the filter + notify metadata.
+        kwargs = event_bus.subscribe_to_pattern.await_args.kwargs
+        self.assertEqual(kwargs["pattern"], "WARN")
+        self.assertEqual(kwargs["target_session_id"], "s-other")
+        self.assertEqual(kwargs["target_agent"], "alice")
+        self.assertEqual(kwargs["notify_agent"], "watcher")
+        # Response echoes the metadata.
+        self.assertEqual(parsed["data"]["target_agent"], "alice")
+        self.assertEqual(parsed["data"]["notify_agent"], "watcher")
+
+    def test_match_callback_pushes_notification_to_subscribing_agent(self):
+        """The on_match closure should add a notification to the subscribing
+        agent's queue when a pattern fires."""
+        event_bus = MagicMock()
+        captured_callback = {}
+
+        async def capture(*, pattern, callback, **_kwargs):
+            captured_callback["fn"] = callback
+            return "sub-notify"
+
+        event_bus.subscribe_to_pattern = AsyncMock(side_effect=capture)
+        notification_manager = MagicMock()
+        notification_manager.add_simple = AsyncMock()
+
+        ctx = _make_ctx(
+            event_bus=event_bus,
+            notification_manager=notification_manager,
+        )
+
+        async def run():
+            await subscribe(
+                ctx=ctx,
+                op="subscribe",
+                pattern=r"BUILD\s+OK",
+                notify_agent="watcher",
+                notify_level="info",
+                target_agent="alice",
+            )
+            # Now invoke the captured callback as if a match had fired.
+            await captured_callback["fn"]("BUILD OK", None)
+
+        asyncio.run(run())
+
+        notification_manager.add_simple.assert_awaited_once()
+        kwargs = notification_manager.add_simple.await_args.kwargs
+        self.assertEqual(kwargs["agent"], "watcher")
+        self.assertEqual(kwargs["level"], "info")
+        self.assertIn("BUILD OK", kwargs["summary"])
+        self.assertIn("agent=alice", kwargs["context"])
+
+    def test_match_callback_no_notify_if_no_agent(self):
+        """When notify_agent is omitted, no notification is pushed."""
+        event_bus = MagicMock()
+        captured = {}
+        async def capture(*, pattern, callback, **_kwargs):
+            captured["fn"] = callback
+            return "sub-x"
+        event_bus.subscribe_to_pattern = AsyncMock(side_effect=capture)
+        notification_manager = MagicMock()
+        notification_manager.add_simple = AsyncMock()
+        ctx = _make_ctx(
+            event_bus=event_bus,
+            notification_manager=notification_manager,
+        )
+
+        async def run():
+            await subscribe(ctx=ctx, op="subscribe", pattern="x")
+            await captured["fn"]("x", None)
+
+        asyncio.run(run())
+        notification_manager.add_simple.assert_not_awaited()
 
     def test_missing_pattern_returns_err(self):
         parsed = asyncio.run(subscribe(
-            ctx=_make_ctx(),
+            ctx=_make_ctx(event_bus=MagicMock()),
             op="subscribe",
         ))
         self.assertFalse(parsed["ok"])
@@ -495,7 +619,7 @@ class TestSubscribeV2(unittest.TestCase):
 
     def test_bad_regex_returns_err(self):
         parsed = asyncio.run(subscribe(
-            ctx=_make_ctx(),
+            ctx=_make_ctx(event_bus=MagicMock()),
             op="subscribe",
             pattern="[bad(regex",
         ))

@@ -907,6 +907,18 @@ class PatternSubscriptionResponse(BaseModel):
     subscription_id: str = Field(..., description="Unique subscription ID")
     pattern: str = Field(..., description="The registered pattern")
     event_name: Optional[str] = Field(default=None, description="Event triggered on match")
+    target_session_id: Optional[str] = Field(
+        default=None,
+        description="If set, the subscription only fires for output from this session.",
+    )
+    target_agent: Optional[str] = Field(
+        default=None,
+        description="If set, the subscription only fires for output from this agent's session.",
+    )
+    notify_agent: Optional[str] = Field(
+        default=None,
+        description="Agent that receives a notification when the pattern matches.",
+    )
 
 
 # ============================================================================

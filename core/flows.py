@@ -195,6 +195,19 @@ _global_registry = ListenerRegistry()
 # EVENT BUS
 # ============================================================================
 
+@dataclass
+class _PatternSubscription:
+    """Internal record for an active pattern subscription on the event bus."""
+    subscription_id: str
+    pattern: str
+    wrapper: Callable[[str, str], Awaitable[bool]]
+    event_name: Optional[str] = None
+    target_session_id: Optional[str] = None
+    target_agent: Optional[str] = None
+    notify_agent: Optional[str] = None
+    created_at: datetime = field(default_factory=datetime.now)
+
+
 class EventBus:
     """Central event bus for managing event flow.
 
@@ -222,8 +235,8 @@ class EventBus:
         self._event_queue: asyncio.Queue[Event] = asyncio.Queue()
         self._process_task: Optional[asyncio.Task] = None
         self._flow_instances: Dict[str, "Flow"] = {}
-        # Terminal output pattern subscriptions
-        self._pattern_subscriptions: Dict[str, List[Callable]] = defaultdict(list)
+        # Terminal output pattern subscriptions, keyed by subscription_id.
+        self._pattern_subscriptions: Dict[str, "_PatternSubscription"] = {}
 
     async def start(self) -> None:
         """Start the event processing loop."""
@@ -552,56 +565,116 @@ class EventBus:
         self,
         pattern: str,
         callback: Callable[[str, Any], Awaitable[None]],
-        event_name: Optional[str] = None
+        event_name: Optional[str] = None,
+        target_session_id: Optional[str] = None,
+        target_agent: Optional[str] = None,
+        notify_agent: Optional[str] = None,
     ) -> str:
         """Subscribe to terminal output matching a pattern.
 
         Args:
-            pattern: Regex pattern to match
-            callback: Async callback(matched_text, match_object)
-            event_name: Optional event to trigger on match
+            pattern: Regex pattern to match.
+            callback: Async ``callback(matched_text, match_object)`` invoked
+                on every match.
+            event_name: Optional workflow event to trigger on match.
+            target_session_id: If set, only fire when output came from this
+                session. Combine with ``target_agent`` for cross-agent
+                subscriptions ("watch agent X's pane for pattern Y").
+            target_agent: If set, only fire when output came from a session
+                owned by this agent. Resolved at match time.
+            notify_agent: Stored as metadata so callers can identify which
+                agent owns the subscription (for the agent-feed flow); the
+                ``callback`` itself is responsible for actually pushing the
+                notification.
 
         Returns:
-            Subscription ID
+            Subscription ID.
         """
         subscription_id = str(uuid.uuid4())
 
-        async def wrapper(text: str) -> bool:
-            """Returns True if pattern matched, False otherwise."""
+        async def wrapper(session_id: str, text: str) -> bool:
+            """Returns True if pattern matched and was delivered."""
+            if target_session_id is not None and session_id != target_session_id:
+                return False
             match = re.search(pattern, text)
-            if match:
-                await callback(match.group(0), match)
-                if event_name:
-                    await self.trigger(
-                        event_name,
-                        payload={"text": text, "match": match.group(0)},
-                        source="pattern_subscription"
-                    )
-                return True
-            return False
+            if not match:
+                return False
+            await callback(match.group(0), match)
+            if event_name:
+                await self.trigger(
+                    event_name,
+                    payload={
+                        "text": text,
+                        "match": match.group(0),
+                        "session_id": session_id,
+                    },
+                    source="pattern_subscription",
+                )
+            return True
 
-        self._pattern_subscriptions[subscription_id].append(wrapper)
-        self._logger.info(f"Registered pattern subscription: {pattern}")
+        self._pattern_subscriptions[subscription_id] = _PatternSubscription(
+            subscription_id=subscription_id,
+            pattern=pattern,
+            wrapper=wrapper,
+            event_name=event_name,
+            target_session_id=target_session_id,
+            target_agent=target_agent,
+            notify_agent=notify_agent,
+        )
+        self._logger.info(f"Registered pattern subscription: {pattern} (id={subscription_id})")
         return subscription_id
+
+    async def unsubscribe_from_pattern(self, subscription_id: str) -> bool:
+        """Cancel a pattern subscription. Returns True if removed."""
+        sub = self._pattern_subscriptions.pop(subscription_id, None)
+        if sub is None:
+            return False
+        self._logger.info(f"Unsubscribed from pattern: {sub.pattern} (id={subscription_id})")
+        return True
+
+    def list_pattern_subscriptions(self) -> List[Dict[str, Any]]:
+        """Return metadata for active pattern subscriptions."""
+        return [
+            {
+                "subscription_id": sub.subscription_id,
+                "pattern": sub.pattern,
+                "event_name": sub.event_name,
+                "target_session_id": sub.target_session_id,
+                "target_agent": sub.target_agent,
+                "notify_agent": sub.notify_agent,
+                "created_at": sub.created_at.isoformat(),
+            }
+            for sub in self._pattern_subscriptions.values()
+        ]
 
     async def process_terminal_output(
         self,
         session_id: str,
-        output: str
+        output: str,
+        agent_name: Optional[str] = None,
     ) -> List[str]:
         """Process terminal output against pattern subscriptions.
+
+        Subscriptions filtered by ``target_session_id`` only fire when
+        ``session_id`` matches. Subscriptions filtered by ``target_agent``
+        fire only when ``agent_name`` matches (caller resolves
+        session→agent before dispatch).
 
         Returns list of triggered subscription IDs.
         """
         triggered = []
-        for sub_id, callbacks in self._pattern_subscriptions.items():
-            for callback in callbacks:
-                try:
-                    matched = await callback(output)
-                    if matched:
-                        triggered.append(sub_id)
-                except Exception as e:
-                    self._logger.error(f"Pattern callback error: {e}")
+        # Snapshot to a list to allow callbacks that mutate
+        # _pattern_subscriptions (e.g., self-unsubscribe).
+        subs = list(self._pattern_subscriptions.values())
+        for sub in subs:
+            if sub.target_agent is not None and agent_name != sub.target_agent:
+                continue
+            try:
+                matched = await sub.wrapper(session_id, output)
+                if matched:
+                    triggered.append(sub.subscription_id)
+            except Exception as e:
+                self._logger.error(f"Pattern callback error: {e}")
         return triggered
 
     async def clear(self) -> None:
