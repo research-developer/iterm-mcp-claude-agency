@@ -228,14 +228,21 @@ class TestOrchestrateV2(unittest.TestCase):
         bound. Lock in the contract: ``tag_lock_manager`` and
         ``notification_manager`` from the lifespan must be threaded into
         ``execute_write_request`` for every command in the playbook.
+
+        We exercise a multi-command playbook and capture the kwargs of
+        each ``execute_write_request`` call separately so a regression
+        that only threads the managers on the first iteration (or only
+        on the last) would still fail.
         """
         from core.models import WriteToSessionsResponse
 
-        captured = {}
+        calls: list[dict] = []
 
         async def fake_write(req, term, reg, log, lock_manager=None, notification_manager=None):
-            captured["lock_manager"] = lock_manager
-            captured["notification_manager"] = notification_manager
+            calls.append({
+                "lock_manager": lock_manager,
+                "notification_manager": notification_manager,
+            })
             return WriteToSessionsResponse(
                 results=[], sent_count=1, skipped_count=0, error_count=0,
             )
@@ -249,6 +256,14 @@ class TestOrchestrateV2(unittest.TestCase):
             notification_manager=sentinel_notify,
         )
 
+        def _cmd(name: str) -> dict:
+            return {
+                "name": name,
+                "messages": [
+                    {"content": f"echo {name}", "targets": [{"agent": "alice"}]},
+                ],
+            }
+
         with patch(
             "iterm_mcpy.tools.orchestrate.execute_write_request",
             side_effect=fake_write,
@@ -256,23 +271,19 @@ class TestOrchestrateV2(unittest.TestCase):
             parsed = asyncio.run(orchestrate(
                 ctx=ctx,
                 op="POST", definer="INVOKE",
-                playbook={
-                    "commands": [
-                        {
-                            "name": "step1",
-                            "messages": [
-                                {
-                                    "content": "echo hi",
-                                    "targets": [{"agent": "alice"}],
-                                },
-                            ],
-                        },
-                    ],
-                },
+                playbook={"commands": [_cmd("step1"), _cmd("step2")]},
             ))
         self.assertTrue(parsed["ok"])
-        self.assertIs(captured["lock_manager"], sentinel_lock)
-        self.assertIs(captured["notification_manager"], sentinel_notify)
+        self.assertEqual(len(calls), 2)
+        for i, call in enumerate(calls):
+            self.assertIs(
+                call["lock_manager"], sentinel_lock,
+                f"command #{i} did not receive lifespan tag_lock_manager",
+            )
+            self.assertIs(
+                call["notification_manager"], sentinel_notify,
+                f"command #{i} did not receive lifespan notification_manager",
+            )
 
 
 # ========================================================================= #
