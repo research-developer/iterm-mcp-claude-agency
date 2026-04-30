@@ -74,6 +74,10 @@ ipython_config.py
 .claude/*
 !.claude/commands/
 
+# Claude background-runner scratch artifacts (per-worktree, never committed)
+.claude-runner.sh
+.claude-prompt.txt
+
 # Local development
 Untitled*.ipynb
 **.worktrees/
