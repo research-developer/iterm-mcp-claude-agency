@@ -23,11 +23,49 @@ enforce safe-character conventions on namespace parts and keys before
 hitting the memory store.
 """
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 
 from iterm_mcpy.dispatcher import MethodDispatcher
+from iterm_mcpy.errors import ErrorCode, ToolError
+
+
+# Namespace strings can use either "/" or "." as a separator, or both.
+_NAMESPACE_SPLIT = re.compile(r"[./]")
+
+
+def _coerce_namespace(value: Union[str, List[str], None]) -> Optional[List[str]]:
+    """Accept str | list | None and return a list of segments, or None.
+
+    Strings get split on `/` or `.` so callers can write
+    ``"project/agent"`` or ``"project.agent"`` instead of
+    ``["project", "agent"]``. Empty strings raise; downstream
+    ``_validate_namespace`` rejects bad characters per segment.
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        if not value:
+            raise ToolError(
+                ErrorCode.INVALID_PARAM,
+                "namespace string cannot be empty",
+                hint="pass a non-empty string like 'project/agent' or a list ['project','agent']",
+            )
+        # Split on `/` or `.` in any order; keep all non-empty segments.
+        parts = [p for p in _NAMESPACE_SPLIT.split(value) if p]
+        if not parts:
+            raise ToolError(
+                ErrorCode.INVALID_PARAM,
+                f"namespace string {value!r} contained only separators",
+            )
+        return parts
+    raise ToolError(
+        ErrorCode.INVALID_PARAM,
+        f"namespace must be a list or string, got {type(value).__name__}",
+    )
 
 
 # Pattern for safe namespace and key characters.
@@ -84,7 +122,7 @@ class MemoryDispatcher(MethodDispatcher):
             "params": [
                 "target=None | 'search' | 'keys' | 'namespaces' | 'stats'",
                 # retrieve (target=None + namespace + key):
-                "namespace?=[str]",
+                "namespace?=[str] | str  (accepts dotted 'a.b.c' or slashed 'a/b/c')",
                 "key?",
                 # search (target='search'):
                 "query?",
@@ -415,7 +453,7 @@ async def memory(
     op: str = "GET",
     definer: Optional[str] = None,
     target: Optional[str] = None,
-    namespace: Optional[List[str]] = None,
+    namespace: Optional[Union[str, List[str]]] = None,
     key: Optional[str] = None,
     value: Optional[Any] = None,
     metadata: Optional[Dict[str, Any]] = None,
@@ -472,6 +510,15 @@ async def memory(
         # Explicit target wins over the mapping's implied target.
         if mapped_target is not None and target is None:
             target = mapped_target
+
+    # Accept namespace as a list, dotted string, or slashed string.
+    # Coercion errors surface as a structured envelope rather than a
+    # late ValueError from _validate_namespace.
+    from iterm_mcpy.responses import err_envelope
+    try:
+        namespace = _coerce_namespace(namespace)
+    except ToolError as e:
+        return err_envelope(method=op.upper(), error=e)
 
     raw_params = {
         "target": target,

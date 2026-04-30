@@ -15,6 +15,7 @@ from core.definer_verbs import DefinerError, resolve_op
 from core.models import (
     OrchestrateRequest,
     OrchestrateResponse,
+    Playbook,
     PlaybookCommandResult,
     WriteToSessionsRequest,
 )
@@ -55,6 +56,28 @@ async def orchestrate(
         resolution = resolve_op(op, definer)
     except DefinerError as e:
         return err_envelope(method=op.upper(), error=ToolError.from_exception(e))
+
+    if resolution.method == "OPTIONS":
+        return ok_envelope(
+            method="OPTIONS",
+            data={
+                "tool": "orchestrate",
+                "kind": "action",
+                "method": "POST",
+                "definer": "INVOKE",
+                "aliases": ["invoke", "execute", "run", "orchestrate"],
+                "params": {
+                    "playbook": "Playbook (see playbook_schema below)",
+                },
+                "playbook_schema": Playbook.model_json_schema(),
+                "description": (
+                    "Run a playbook bundling layout + commands + cascade + "
+                    "reads in a single call. The 'playbook_schema' field is "
+                    "the JSON Schema for the Playbook model — feed it into "
+                    "your client to validate playbooks before sending."
+                ),
+            },
+        )
 
     if resolution.method != "POST" or resolution.definer != "INVOKE":
         return err_envelope(

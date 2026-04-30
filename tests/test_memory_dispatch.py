@@ -711,5 +711,81 @@ class TestLegacyOpInterop(unittest.TestCase):
         self.assertEqual(parsed["method"], "DELETE")
 
 
+class TestNamespaceStringCoercion(unittest.TestCase):
+    """Regression for fb-20260424-157473f7 #5: accept dotted/slashed strings.
+
+    Callers used to be forced to pass `namespace=["a","b","c"]`. They can
+    now pass `"a/b/c"` or `"a.b.c"` and get the same result.
+    """
+
+    def _retrieve_with_namespace(self, namespace_arg):
+        store = MagicMock()
+        store.retrieve = AsyncMock(return_value=None)
+        parsed = asyncio.run(memory(
+            ctx=_make_ctx(memory_store=store),
+            op="retrieve",
+            namespace=namespace_arg,
+            key="k",
+        ))
+        return store.retrieve.call_args, parsed
+
+    def test_slash_separated_string_coerces_to_list(self):
+        call_args, parsed = self._retrieve_with_namespace("proj/agent/scratch")
+        # memory_store.retrieve is called with tuple(namespace).
+        ns_tuple = call_args.args[0]
+        self.assertEqual(ns_tuple, ("proj", "agent", "scratch"))
+
+    def test_dot_separated_string_coerces_to_list(self):
+        call_args, parsed = self._retrieve_with_namespace("proj.agent.scratch")
+        ns_tuple = call_args.args[0]
+        self.assertEqual(ns_tuple, ("proj", "agent", "scratch"))
+
+    def test_single_segment_string_yields_one_element_list(self):
+        call_args, parsed = self._retrieve_with_namespace("proj")
+        ns_tuple = call_args.args[0]
+        self.assertEqual(ns_tuple, ("proj",))
+
+    def test_existing_list_input_still_works(self):
+        call_args, parsed = self._retrieve_with_namespace(["proj", "agent"])
+        ns_tuple = call_args.args[0]
+        self.assertEqual(ns_tuple, ("proj", "agent"))
+
+    def test_mixed_separators_split_on_any(self):
+        # Edge case: caller used a mix. Accept both since we're being lenient.
+        call_args, parsed = self._retrieve_with_namespace("proj/sub.scratch")
+        ns_tuple = call_args.args[0]
+        self.assertEqual(ns_tuple, ("proj", "sub", "scratch"))
+
+    def test_empty_string_is_an_error(self):
+        # Empty string isn't a valid namespace; coerce should not silently
+        # produce an empty list — the dispatcher's `if not namespace` check
+        # would then mistakenly flag missing-param.
+        store = MagicMock()
+        store.retrieve = AsyncMock(return_value=None)
+        parsed = asyncio.run(memory(
+            ctx=_make_ctx(memory_store=store),
+            op="retrieve",
+            namespace="",
+            key="k",
+        ))
+        self.assertFalse(parsed["ok"])
+
+    def test_store_accepts_string_namespace(self):
+        # Coercion must apply on every entry that takes a namespace.
+        store = MagicMock()
+        store.store = AsyncMock(return_value=None)
+        parsed = asyncio.run(memory(
+            ctx=_make_ctx(memory_store=store),
+            op="store",
+            namespace="proj/agent",
+            key="k",
+            value="v",
+        ))
+        self.assertTrue(parsed["ok"])
+        # store.store(namespace_tuple, key, value, metadata=...)
+        ns_tuple = store.store.call_args.args[0]
+        self.assertEqual(ns_tuple, ("proj", "agent"))
+
+
 if __name__ == "__main__":
     unittest.main()
