@@ -919,6 +919,10 @@ class PatternSubscriptionResponse(BaseModel):
         default=None,
         description="Agent that receives a notification when the pattern matches.",
     )
+    notify_level: Optional[str] = Field(
+        default=None,
+        description="Notification level used when pushing to notify_agent (e.g. 'info', 'warning').",
+    )
 
 
 # ============================================================================

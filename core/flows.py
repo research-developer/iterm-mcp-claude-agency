@@ -205,6 +205,7 @@ class _PatternSubscription:
     target_session_id: Optional[str] = None
     target_agent: Optional[str] = None
     notify_agent: Optional[str] = None
+    notify_level: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
 
 
@@ -569,6 +570,7 @@ class EventBus:
         target_session_id: Optional[str] = None,
         target_agent: Optional[str] = None,
         notify_agent: Optional[str] = None,
+        notify_level: Optional[str] = None,
     ) -> str:
         """Subscribe to terminal output matching a pattern.
 
@@ -620,6 +622,7 @@ class EventBus:
             target_session_id=target_session_id,
             target_agent=target_agent,
             notify_agent=notify_agent,
+            notify_level=notify_level,
         )
         self._logger.info(f"Registered pattern subscription: {pattern} (id={subscription_id})")
         return subscription_id
@@ -642,6 +645,7 @@ class EventBus:
                 "target_session_id": sub.target_session_id,
                 "target_agent": sub.target_agent,
                 "notify_agent": sub.notify_agent,
+                "notify_level": sub.notify_level,
                 "created_at": sub.created_at.isoformat(),
             }
             for sub in self._pattern_subscriptions.values()

@@ -535,6 +535,7 @@ class TestSubscribeV2(unittest.TestCase):
             target_session_id="s-other",
             target_agent="alice",
             notify_agent="watcher",
+            notify_level="warning",
         ))
         self.assertTrue(parsed["ok"])
         # Verify the event_bus call carries all the filter + notify metadata.
@@ -543,9 +544,28 @@ class TestSubscribeV2(unittest.TestCase):
         self.assertEqual(kwargs["target_session_id"], "s-other")
         self.assertEqual(kwargs["target_agent"], "alice")
         self.assertEqual(kwargs["notify_agent"], "watcher")
-        # Response echoes the metadata.
+        # notify_level round-trips when notify_agent is set (review fixup).
+        self.assertEqual(kwargs["notify_level"], "warning")
+        # Response echoes the full metadata.
         self.assertEqual(parsed["data"]["target_agent"], "alice")
         self.assertEqual(parsed["data"]["notify_agent"], "watcher")
+        self.assertEqual(parsed["data"]["notify_level"], "warning")
+
+    def test_notify_level_omitted_when_no_notify_agent(self):
+        """notify_level without notify_agent is meaningless — drop it from
+        persisted state and the response so list output doesn't lie."""
+        event_bus = MagicMock()
+        event_bus.subscribe_to_pattern = AsyncMock(return_value="sub-x")
+        parsed = asyncio.run(subscribe(
+            ctx=_make_ctx(event_bus=event_bus),
+            op="subscribe",
+            pattern="x",
+            notify_level="error",  # no notify_agent
+        ))
+        self.assertTrue(parsed["ok"])
+        kwargs = event_bus.subscribe_to_pattern.await_args.kwargs
+        self.assertIsNone(kwargs["notify_level"])
+        self.assertIsNone(parsed["data"].get("notify_level"))
 
     def test_match_callback_pushes_notification_to_subscribing_agent(self):
         """The on_match closure should add a notification to the subscribing
