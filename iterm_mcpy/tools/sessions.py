@@ -480,6 +480,7 @@ async def _start_monitoring_core(
     event_bus: Optional[EventBus],
     logger,
     *,
+    agent_registry=None,
     enable_event_bus: bool = True,
     settle_delay: float = 2.0,
 ) -> bool:
@@ -495,6 +496,11 @@ async def _start_monitoring_core(
             enable_event_bus is False), monitoring still starts but no
             callback is attached — output is not published to the bus.
         logger: Logger for debug/info/error messages.
+        agent_registry: Optional registry used to resolve session→agent
+            inside the event-bus callback so cross-agent pattern
+            subscriptions (`target_agent`) can fire. When None,
+            `target_agent` filters always reject (caller can still use
+            `target_session_id` for per-session filtering).
         enable_event_bus: Whether to attach a callback that routes output to
             the EventBus (for pattern subscriptions). Default True. Silently
             skipped when event_bus is None.
@@ -510,9 +516,19 @@ async def _start_monitoring_core(
         async def event_bus_callback(output: str) -> None:
             """Route terminal output to EventBus for pattern matching."""
             try:
+                # Resolve session→agent at delivery time so subscriptions
+                # filtered by target_agent can fire. Resolution must be
+                # per-call (not per-session) because agents can detach
+                # and reattach.
+                agent_name = None
+                if agent_registry is not None:
+                    agent = agent_registry.get_agent_by_session(session.id)
+                    if agent is not None:
+                        agent_name = agent.name
                 triggered = await event_bus.process_terminal_output(
                     session_id=session.id,
                     output=output,
+                    agent_name=agent_name,
                 )
                 if triggered:
                     logger.debug(f"Pattern subscriptions triggered: {triggered}")
@@ -1503,6 +1519,7 @@ class SessionsDispatcher(MethodDispatcher):
                 session,
                 event_bus,
                 logger,
+                agent_registry=agent_registry,
                 enable_event_bus=enable_event_bus,
                 # Settle delay mostly matters for the legacy blocking tool;
                 # sessions returns the result structurally so skip the wait.

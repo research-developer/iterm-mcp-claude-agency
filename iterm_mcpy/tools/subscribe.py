@@ -177,6 +177,8 @@ async def subscribe(
             target_session_id=target_session_id,
             target_agent=target_agent,
             notify_agent=notify_agent,
+            # Only persist notify_level when it actually drives behavior.
+            notify_level=notify_level if notify_agent else None,
         )
         result = PatternSubscriptionResponse(
             subscription_id=sub_id,
@@ -185,6 +187,7 @@ async def subscribe(
             target_session_id=target_session_id,
             target_agent=target_agent,
             notify_agent=notify_agent,
+            notify_level=notify_level if notify_agent else None,
         )
         logger.info(
             "subscribe: pattern=%r event=%r target_session=%r target_agent=%r notify=%r id=%s",

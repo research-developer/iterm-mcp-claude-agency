@@ -29,6 +29,7 @@ from mcp.server.fastmcp import Context
 
 from iterm_mcpy.dispatcher import MethodDispatcher
 from iterm_mcpy.errors import ErrorCode, ToolError
+from iterm_mcpy.responses import err_envelope
 
 
 # Namespace strings can use either "/" or "." as a separator, or both.
@@ -60,6 +61,7 @@ def _coerce_namespace(value: Union[str, List[str], None]) -> Optional[List[str]]
             raise ToolError(
                 ErrorCode.INVALID_PARAM,
                 f"namespace string {value!r} contained only separators",
+                hint="pass a non-empty string like 'project/agent' or a list ['project','agent']",
             )
         return parts
     raise ToolError(
@@ -514,7 +516,6 @@ async def memory(
     # Accept namespace as a list, dotted string, or slashed string.
     # Coercion errors surface as a structured envelope rather than a
     # late ValueError from _validate_namespace.
-    from iterm_mcpy.responses import err_envelope
     try:
         namespace = _coerce_namespace(namespace)
     except ToolError as e:
