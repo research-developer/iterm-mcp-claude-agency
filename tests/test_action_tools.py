@@ -220,6 +220,60 @@ class TestOrchestrateV2(unittest.TestCase):
         self.assertFalse(parsed["ok"])
         self.assertIn("playbook", parsed["error"]["message"].lower())
 
+    def test_lifespan_managers_threaded_into_write(self):
+        """Regression for fb-20260410-7196da03 / PR #113.
+
+        ``orchestrate`` originally raised ``NameError: name 'lock_manager'
+        is not defined`` because it forwarded a variable that was never
+        bound. Lock in the contract: ``tag_lock_manager`` and
+        ``notification_manager`` from the lifespan must be threaded into
+        ``execute_write_request`` for every command in the playbook.
+        """
+        from core.models import WriteToSessionsResponse
+
+        captured = {}
+
+        async def fake_write(req, term, reg, log, lock_manager=None, notification_manager=None):
+            captured["lock_manager"] = lock_manager
+            captured["notification_manager"] = notification_manager
+            return WriteToSessionsResponse(
+                results=[], sent_count=1, skipped_count=0, error_count=0,
+            )
+
+        sentinel_lock = MagicMock(name="tag_lock_manager")
+        sentinel_notify = MagicMock(name="notification_manager")
+        ctx = _make_ctx(
+            layout_manager=MagicMock(),
+            profile_manager=MagicMock(),
+            tag_lock_manager=sentinel_lock,
+            notification_manager=sentinel_notify,
+        )
+
+        with patch(
+            "iterm_mcpy.tools.orchestrate.execute_write_request",
+            side_effect=fake_write,
+        ):
+            parsed = asyncio.run(orchestrate(
+                ctx=ctx,
+                op="POST", definer="INVOKE",
+                playbook={
+                    "commands": [
+                        {
+                            "name": "step1",
+                            "messages": [
+                                {
+                                    "content": "echo hi",
+                                    "targets": [{"agent": "alice"}],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ))
+        self.assertTrue(parsed["ok"])
+        self.assertIs(captured["lock_manager"], sentinel_lock)
+        self.assertIs(captured["notification_manager"], sentinel_notify)
+
 
 # ========================================================================= #
 # delegate — POST+INVOKE (target=task|plan)                              #
