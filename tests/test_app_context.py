@@ -34,6 +34,10 @@ class TestSingleton(unittest.IsolatedAsyncioTestCase):
         import iterm_mcpy.app_context as ac
         ac._app_context = None  # reset between tests
 
+    async def asyncTearDown(self):
+        import iterm_mcpy.app_context as ac
+        ac._app_context = None
+
     async def test_concurrent_calls_build_once_and_share_instance(self):
         import iterm_mcpy.app_context as ac
         from iterm_mcpy.app_context import AppContext, get_app_context
