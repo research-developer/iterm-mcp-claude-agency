@@ -1,14 +1,14 @@
-"""MCP server implementation for iTerm2 controller using the official MCP Python SDK.
+"""FastMCP server wiring: the mcp instance, lifespan, resources, prompts, and OAuth stub routes.
 
-This version supports parallel multi-session operations with agent/team management.
+All long-lived state (iTerm2 connection, registries) lives in iterm_mcpy/app_context.py;
+the lifespan only hands each client session a reference to that process singleton.
 """
 
 import json
-import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Any
+from typing import AsyncIterator
 
 from mcp.server.fastmcp import FastMCP
 
