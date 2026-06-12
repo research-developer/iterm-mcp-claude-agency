@@ -94,6 +94,17 @@ async def oauth_protected_resource_mcp_metadata(request: Request) -> JSONRespons
     )
 
 
+@mcp.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> JSONResponse:
+    """Liveness + version handshake endpoint for the shim."""
+    from iterm_mcpy.daemon import package_version
+    return JSONResponse({
+        "status": "ok",
+        "version": package_version(),
+        "pid": os.getpid(),
+    })
+
+
 # Shared helpers (resolve_session, execute_write_request, etc.) live in
 # iterm_mcpy/helpers.py and are imported directly by the tool modules.
 # See iterm_mcpy/helpers.py for the full list.
