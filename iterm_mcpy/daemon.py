@@ -6,10 +6,12 @@ One daemon per machine. State (port/pid/version) is advertised in
 
 import json
 import os
+import signal
 import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 STATE_DIR = Path("~/.iterm-mcp").expanduser()
 PORT_RANGE = range(12340, 12350)  # documented range, kept from the old attempt
@@ -27,6 +29,8 @@ def find_free_port() -> int:
     for port in PORT_RANGE:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
+                # The socket closes before we return; there is a small TOCTOU window
+                # between this probe and FastMCP's bind. Acceptable on loopback.
                 s.bind(("127.0.0.1", port))
                 return port
             except OSError:
@@ -63,8 +67,11 @@ def clear_state() -> None:
         pass
 
 
-def run_daemon(host: str = "127.0.0.1", port: int = None) -> None:
-    """Run the FastMCP server as the singleton HTTP daemon (blocking)."""
+def run_daemon(host: str = "127.0.0.1", port: Optional[int] = None) -> None:
+    """Run the FastMCP server as the singleton HTTP daemon (blocking).
+
+    Clears the state file on normal exit and SIGTERM.
+    """
     import atexit
     # Import here: pulls in iterm2/FastMCP, which the tests above must not need.
     from iterm_mcpy.fastmcp_server import mcp
@@ -74,6 +81,9 @@ def run_daemon(host: str = "127.0.0.1", port: int = None) -> None:
     mcp.settings.port = port
     write_state(port, host)
     atexit.register(clear_state)
+    # atexit only fires on normal interpreter exit; translate SIGTERM into
+    # SystemExit so `kill <pid>` also clears the state file.
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
     print(f"iterm-mcp daemon v{package_version()} on http://{host}:{port}/mcp",
           file=sys.stderr)
     mcp.run(transport="streamable-http")

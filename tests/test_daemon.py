@@ -53,6 +53,12 @@ class TestPortSelection(unittest.TestCase):
         self.assertNotEqual(port, 12340)
         self.assertIn(port, range(12340, 12350))
 
+    def test_all_ports_occupied_raises(self):
+        from iterm_mcpy import daemon
+        with mock.patch("iterm_mcpy.daemon.PORT_RANGE", range(0)):
+            with self.assertRaises(RuntimeError):
+                daemon.find_free_port()
+
 
 if __name__ == "__main__":
     unittest.main()
