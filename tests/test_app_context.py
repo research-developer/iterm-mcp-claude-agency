@@ -68,5 +68,21 @@ class TestSingleton(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(first, second)
 
 
+class TestNotificationManagerPerAgentCap(unittest.IsolatedAsyncioTestCase):
+    async def test_add_trims_oldest_per_agent_beyond_cap(self):
+        from iterm_mcpy.app_context import NotificationManager
+        mgr = NotificationManager(max_per_agent=3, max_total=100)
+        for i in range(5):
+            await mgr.add_simple("worker-1", "info", f"msg-{i}")
+        await mgr.add_simple("worker-2", "info", "other-agent")
+
+        worker1 = await mgr.get(limit=100, agent="worker-1")
+        self.assertEqual(len(worker1), 3)
+        self.assertEqual({n.summary for n in worker1}, {"msg-2", "msg-3", "msg-4"})
+        # other agents unaffected
+        worker2 = await mgr.get(limit=100, agent="worker-2")
+        self.assertEqual(len(worker2), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

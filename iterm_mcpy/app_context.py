@@ -69,6 +69,13 @@ class NotificationManager:
         """Add a notification, maintaining ring buffer limits."""
         async with self._lock:
             self._notifications.append(notification)
+            # Trim per-agent ring buffer: drop oldest notifications for this agent
+            agent_items = [n for n in self._notifications if n.agent == notification.agent]
+            if len(agent_items) > self._max_per_agent:
+                excess = set(map(id, agent_items[:-self._max_per_agent]))
+                self._notifications = [
+                    n for n in self._notifications if id(n) not in excess
+                ]
             # Trim to max total
             if len(self._notifications) > self._max_total:
                 self._notifications = self._notifications[-self._max_total:]
