@@ -140,6 +140,28 @@ class TestDriverStoreAsyncio(unittest.IsolatedAsyncioTestCase):
         result = await self.store.wait_for_answer("no-such-id", timeout=0.1)
         self.assertIsNone(result)
 
+    async def test_wait_for_answer_evicts_on_answered(self) -> None:
+        """_questions is empty after wait_for_answer returns on the answered path."""
+        q = self.store.post_question("pretooluse", "Allow?", self.options)
+
+        async def answer_shortly():
+            await asyncio.sleep(0.02)
+            self.store.answer_question(q.id, "allow")
+
+        asyncio.create_task(answer_shortly())
+        result = await self.store.wait_for_answer(q.id, timeout=5.0)
+
+        self.assertIsNotNone(result)
+        self.assertNotIn(q.id, self.store._questions)
+
+    async def test_wait_for_answer_evicts_on_timeout(self) -> None:
+        """_questions is empty after wait_for_answer returns on the timeout path."""
+        q = self.store.post_question("pretooluse", "Allow?", self.options)
+        result = await self.store.wait_for_answer(q.id, timeout=0.02)
+
+        self.assertIsNone(result)
+        self.assertNotIn(q.id, self.store._questions)
+
 
 # ---------------------------------------------------------------------------
 # Hook decision-shaping helpers
@@ -158,7 +180,6 @@ def _import_hook_helpers():
     spec = importlib.util.spec_from_file_location(
         "driver_hook", hooks_dir / "driver_hook.py"
     )
-    mod = importlib.util.load_from_spec = spec.loader.load_module  # noqa
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

@@ -188,6 +188,9 @@ class DriverStore:
     ) -> Optional[dict]:
         """Wait until the question is answered or the timeout expires.
 
+        The question is evicted from _questions in a finally block, so both
+        the answered path and the timeout/cancellation path clean up the entry.
+
         Args:
             question_id: UUID string of the question.
             timeout: Maximum seconds to wait (default 120).
@@ -199,11 +202,15 @@ class DriverStore:
         question = self._questions.get(question_id)
         if question is None:
             return None
+        answer: Optional[dict] = None
         try:
             await asyncio.wait_for(
-                asyncio.shield(question.answer_event.wait()),
+                question.answer_event.wait(),
                 timeout=timeout,
             )
+            answer = question.answer
         except asyncio.TimeoutError:
-            return None
-        return question.answer
+            pass
+        finally:
+            self._questions.pop(question_id, None)
+        return answer

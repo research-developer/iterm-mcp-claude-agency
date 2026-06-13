@@ -19,12 +19,13 @@ Error handling:
 """
 
 import json
+import os
 import sys
 import urllib.request
 import urllib.error
 from pathlib import Path
 
-DASHBOARD_URL = "http://127.0.0.1:9999"
+DASHBOARD_URL = os.environ.get("ITERM_MCP_DASHBOARD_URL", "http://127.0.0.1:9999")
 HOOK_TIMEOUT = 120  # seconds to wait for human answer
 
 STOP_OPTIONS = [
