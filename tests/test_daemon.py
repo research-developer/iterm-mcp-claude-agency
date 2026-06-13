@@ -41,6 +41,18 @@ class TestStateFile(unittest.TestCase):
         daemon.clear_state()
         self.assertIsNone(daemon.read_state())
 
+    def test_clear_state_spares_other_daemons_file(self):
+        from iterm_mcpy import daemon
+        daemon.write_state(port=12341)
+        # Simulate a successor daemon's file: rewrite pid to a different process.
+        import json as _json
+        p = Path(self.tmp.name) / "daemon.json"
+        state = _json.loads(p.read_text())
+        state["pid"] = state["pid"] + 1
+        p.write_text(_json.dumps(state))
+        daemon.clear_state()
+        self.assertIsNotNone(daemon.read_state())
+
 
 class TestPortSelection(unittest.TestCase):
     def test_skips_occupied_port(self):

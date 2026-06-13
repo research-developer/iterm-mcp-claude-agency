@@ -2,6 +2,27 @@
 
 After this branch merges to main, run these once (requires the merged code on main and the iterm-mcp package importable):
 
+## 0. Pre-migration: this machine's specific landmines
+
+- **A launchd agent is running the OLD daemon and will fight you.**
+  `~/Library/LaunchAgents/com.iterm-mcp.daemon.plist` (label `com.iterm-mcp.daemon`,
+  RunAtLoad + KeepAlive) runs the pre-migration `run_server.py --transport
+  streamable-http --port 12345` and respawns it when killed. Unload it first:
+  ```bash
+  launchctl unload ~/Library/LaunchAgents/com.iterm-mcp.daemon.plist
+  rm ~/Library/LaunchAgents/com.iterm-mcp.daemon.plist   # or rewrite it to run `iterm-mcp daemon`
+  ```
+  (If you want a boot-started daemon afterwards, recreate the plist around
+  `iterm-mcp daemon` — but the shim auto-start makes that optional.)
+
+- **The editable install is dangling.** The interpreter's
+  `__editable__.iterm_mcp-0.1.0.pth` points at a deleted worktree, so
+  `python -m iterm_mcpy` and the `iterm-mcp` script fail outside a checkout.
+  Reinstall from the merged main checkout first:
+  ```bash
+  cd /Users/psentro/research-developer/iterm-mcp-claude-agency && pip install -e .
+  ```
+
 ## 1. Migrate client configs
 
 - Claude Code: remove the broken HTTP-as-stdio entry if present, then re-add:
@@ -27,3 +48,4 @@ After this branch merges to main, run these once (requires the merged code on ma
 - If the daemon dies while a client's stdin is idle, that client's shim notices only on its next message (documented in `iterm_mcpy/shim.py:_pump`).
 - A daemon holding a dead iTerm2 WebSocket fails tool calls until restarted (`iterm-mcp stop` + next client auto-respawns). Reconnect supervisor is a separate planned work item.
 - Editable installs always report version 0.1.0, so the shim's version-mismatch restart won't fire between dev iterations — use `iterm-mcp stop` after changing daemon code.
+- The registry's implicit *active session* is shared across ALL clients (last writer wins); pass explicit session/agent/team targets in multi-client setups.

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from pathlib import Path
 
 import anyio
 
@@ -38,11 +39,19 @@ def probe_health(state: dict):
 def spawn_daemon() -> None:
     """Start the daemon detached; logs go to ~/.iterm-mcp/daemon.log."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    with open(STATE_DIR / "daemon.log", "ab") as log:
+    # Pin cwd to the repo root (parent of the iterm_mcpy package) so the
+    # daemon always runs against this checkout rather than the client's cwd,
+    # which may be unrelated or point at a stale editable install.
+    repo_root = Path(__file__).resolve().parents[1]
+    log_path = STATE_DIR / "daemon.log"
+    if log_path.exists() and log_path.stat().st_size > 5 * 1024 * 1024:
+        log_path.replace(log_path.with_suffix(".log.1"))  # keep one generation
+    with open(log_path, "ab") as log:
         subprocess.Popen(
             [sys.executable, "-m", "iterm_mcpy", "daemon"],
             stdout=log, stderr=log, stdin=subprocess.DEVNULL,
             start_new_session=True,
+            cwd=repo_root,
         )
 
 
@@ -123,13 +132,23 @@ async def _pump(endpoint: str) -> None:
     async with anyio.create_task_group() as outer:
         async def run_pump() -> None:
             async with stdio_server() as (client_read, client_write):
-                async with streamablehttp_client(endpoint) as (srv_read, srv_write, _sid):
+                # sse_read_timeout must exceed wait_for's 600 s max long-poll.
+                # SDK accepts float seconds or timedelta; using float to match defaults.
+                async with streamablehttp_client(
+                    endpoint,
+                    timeout=30.0,
+                    sse_read_timeout=660.0,  # > wait_for's 600 s max long-poll
+                ) as (srv_read, srv_write, _sid):
                     async with anyio.create_task_group() as tg:
                         async def to_daemon():
                             """Forward stdin messages → HTTP daemon."""
                             async for msg in client_read:
                                 if isinstance(msg, Exception):
-                                    continue  # malformed stdin line; skip
+                                    print(
+                                        f"iterm-mcp shim: transport error (stdin->daemon): {msg!r}",
+                                        file=sys.stderr,
+                                    )
+                                    continue
                                 await srv_write.send(msg)
                             # Stdin closed: signal HTTP write side we're done.
                             # Don't cancel yet — in-flight responses must arrive.
@@ -139,6 +158,10 @@ async def _pump(endpoint: str) -> None:
                             """Forward HTTP daemon responses → stdout."""
                             async for msg in srv_read:
                                 if isinstance(msg, Exception):
+                                    print(
+                                        f"iterm-mcp shim: transport error (daemon->stdout): {msg!r}",
+                                        file=sys.stderr,
+                                    )
                                     continue
                                 await client_write.send(msg)
                             # Daemon stream ended: flush stdout write side, then

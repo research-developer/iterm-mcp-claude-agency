@@ -92,7 +92,7 @@ iterm-mcp/
 
 ### Architecture: singleton daemon
 
-Both Claude Code and Claude Desktop spawn the stdio shim (`iterm-mcp` / `python -m iterm_mcpy`). The shim discovers or auto-starts a shared singleton daemon over streamable HTTP on `127.0.0.1:12340-12349`. All clients share one iTerm2 connection and one agent/team registry — cross-client agent visibility is the point of this architecture. The daemon auto-starts on first client connect; its state is advertised in `~/.iterm-mcp/daemon.json`; `iterm-mcp status` / `iterm-mcp stop` manage it.
+Both Claude Code and Claude Desktop spawn the stdio shim (`iterm-mcp` / `python -m iterm_mcpy`). The shim discovers or auto-starts a shared singleton daemon over streamable HTTP on `127.0.0.1:12340-12349`. All clients share one iTerm2 connection and one agent/team registry — cross-client agent visibility is the point of this architecture. The daemon auto-starts on first client connect; its state is advertised in `~/.iterm-mcp/daemon.json`; `iterm-mcp status` / `iterm-mcp stop` manage it. Note: the registry's implicit *active session* is shared across all connected clients (last writer wins) — prefer explicit session/agent/team targets when multiple clients are attached.
 
 ```bash
 iterm-mcp                # stdio shim (what Claude Code/Desktop spawn); auto-starts the shared daemon

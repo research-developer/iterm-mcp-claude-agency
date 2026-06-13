@@ -61,6 +61,15 @@ def read_state():
 
 
 def clear_state() -> None:
+    """Remove the state file — but only if it belongs to this process.
+
+    A SIGTERM'd old daemon's atexit must not delete the state file a
+    newly spawned successor just wrote (split-brain: healthy daemon
+    becomes invisible and the next shim spawns another).
+    """
+    state = read_state()
+    if state and state.get("pid") not in (None, os.getpid()):
+        return
     try:
         (STATE_DIR / "daemon.json").unlink()
     except FileNotFoundError:
