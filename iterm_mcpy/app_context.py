@@ -32,6 +32,7 @@ from core.flows import get_event_bus, get_flow_manager
 from core.manager import ManagerRegistry
 from core.memory import SQLiteMemoryStore
 from core.models import AgentNotification
+from core.bus import AgentMessageBus
 from core.profiles import get_profile_manager
 from core.roles import RoleManager
 from core.service_hooks import get_service_hook_manager
@@ -64,9 +65,18 @@ class NotificationManager:
         self._max_per_agent = max_per_agent
         self._max_total = max_total
         self._lock = asyncio.Lock()
+        # Wired by _build_app_context() after both objects are constructed.
+        # When set, add() also enqueues into the bus (non-destructively).
+        self._message_bus: Optional[Any] = None
 
     async def add(self, notification: AgentNotification) -> None:
-        """Add a notification, maintaining ring buffer limits."""
+        """Add a notification, maintaining ring buffer limits.
+
+        Also enqueues a ``kind="notification"`` envelope onto the message bus
+        if one has been wired via ``_message_bus``.  The bus write is
+        fire-and-forget (scheduled as a background task) so it cannot block
+        the ring-buffer write or raise.
+        """
         async with self._lock:
             self._notifications.append(notification)
             # Trim per-agent ring buffer: drop oldest notifications for this agent
@@ -79,6 +89,29 @@ class NotificationManager:
             # Trim to max total
             if len(self._notifications) > self._max_total:
                 self._notifications = self._notifications[-self._max_total:]
+
+        # Bus adapter — additive, does not alter existing behavior.
+        if self._message_bus is not None:
+            try:
+                body = {
+                    "level": notification.level,
+                    "summary": notification.summary,
+                    "context": notification.context,
+                    "action_hint": notification.action_hint,
+                    "timestamp": notification.timestamp.isoformat(),
+                }
+                asyncio.create_task(
+                    self._message_bus.send(
+                        sender="system",
+                        recipient=f"agent:{notification.agent}",
+                        kind="notification",
+                        body=body,
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "NotificationManager: failed to enqueue bus notification"
+                )
 
     async def add_simple(
         self,
@@ -169,6 +202,7 @@ class AppContext:
     flow_manager: Any = None
     role_manager: Any = None
     memory_store: Any = None
+    message_bus: Any = None
     logger: Any = None
     log_dir: Optional[str] = None
 
@@ -308,6 +342,13 @@ async def _build_app_context() -> AppContext:
     memory_store = SQLiteMemoryStore()
     build_logger.info("Memory store initialized (SQLite with FTS5)")
 
+    # Initialize message bus (durable, addressed, long-poll inbox)
+    message_bus = AgentMessageBus()
+    build_logger.info("Message bus initialized (SQLite, durable inbox)")
+
+    # Wire the notification-manager → bus adapter.
+    notification_manager._message_bus = message_bus
+
     return AppContext(
         connection=connection,
         terminal=terminal,
@@ -329,6 +370,7 @@ async def _build_app_context() -> AppContext:
         flow_manager=flow_manager,
         role_manager=role_manager,
         memory_store=memory_store,
+        message_bus=message_bus,
         logger=build_logger,
         log_dir=log_dir,
     )
@@ -361,4 +403,9 @@ async def shutdown_app_context() -> None:
             await ctx.event_bus.stop()
         except Exception:
             logger.exception("Error stopping event bus during shutdown")
+    if ctx.message_bus is not None:
+        try:
+            ctx.message_bus.close()
+        except Exception:
+            logger.exception("Error closing message bus during shutdown")
     shutdown_tracing()
