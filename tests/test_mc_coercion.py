@@ -614,5 +614,185 @@ class TestStateFileRobustness(McCoercionTestBase):
         self.assertEqual(p.name, "default")
 
 
+# ---------------------------------------------------------------------------
+# 9. Fix 1 — full-text option detection (long responses)
+# ---------------------------------------------------------------------------
+
+
+class TestFullTextDetection(McCoercionTestBase):
+    """Fix 1: options at the END of a long response must be detected.
+
+    The bug: _read_last_assistant_text(transcript, max_chars=500) was called
+    at the MC detection site, so options after the first 500 chars were
+    invisible and the hook would spuriously block on every long compliant turn.
+    Fix: call _read_last_assistant_text with max_chars=None at the detection
+    site so the full text is scanned.
+    """
+
+    SESSION = "fulltext-session"
+
+    def test_long_compliant_response_not_blocked(self) -> None:
+        """Stop does NOT block when options appear after the first 500 chars.
+
+        The assistant text is >500 chars of prose followed by a numbered list
+        at the end. With the bug (max_chars=500) the options are invisible and
+        the hook blocks; with the fix (max_chars=None) they are found and the
+        hook falls through.
+        """
+        self.enable_mc()
+
+        # Build a response whose options start well past char 500.
+        preamble = "A" * 600  # 600 chars of prose — options will start at char 600+
+        options_block = "\n1) Refactor: clean up the module\n2) Deploy: push to prod\n3) Wait: gather more info"
+        long_text = preamble + options_block
+
+        transcript = self._make_transcript(long_text)
+
+        result = self._capture_stop({
+            "session_id": self.SESSION,
+            "transcript_path": str(transcript),
+        })
+
+        # MC layer should NOT block — options are present (past char 500).
+        # _post_ask raises → fallback {} returned when not blocked.
+        reason = result.get("reason", "")
+        self.assertNotEqual(
+            result.get("decision"), "block",
+            msg="Stop should NOT block: options are present past char 500 — "
+                "full-text scan required. reason=%r" % reason,
+        )
+
+
+# ---------------------------------------------------------------------------
+# 10. Fix 2 — hardened OPTION_PATTERN for bolded/bulleted output
+# ---------------------------------------------------------------------------
+
+
+class TestHardenedOptionPattern(McCoercionTestBase):
+    """Fix 2: OPTION_PATTERN must accept bolded/bulleted formats Claude emits.
+
+    New accepted forms:
+        **1)** Title       — bolded marker only
+        **1. Title: y**    — whole line bolded
+        - 1) Title         — leading bullet before number
+
+    Still rejected:
+        - Option A          — bullet with no number
+        1)                  — bare marker, nothing after
+        There are 3) reasons — mid-sentence number
+        plain prose
+    """
+
+    # ---- Positive (must match) ------------------------------------------------
+
+    def test_bolded_marker_paren_matches(self) -> None:
+        """'**1)** Title' is detected as an option."""
+        text = "Here is my response.\n**1)** Refactor: clean the code\n**2)** Deploy: push it"
+        self.assertTrue(
+            self.hook._response_has_options(text),
+            "**1)** format should match",
+        )
+
+    def test_bolded_whole_line_dot_matches(self) -> None:
+        """'**1. Title: desc**' (whole line bolded) is detected."""
+        text = "Let me suggest:\n**1. Refactor: clean it up**\n**2. Deploy: push now**"
+        self.assertTrue(
+            self.hook._response_has_options(text),
+            "**1. Title: desc** format should match",
+        )
+
+    def test_bullet_then_number_matches(self) -> None:
+        """'- 1) Title' (leading bullet before number) is detected."""
+        text = "Options:\n- 1) Alpha: first choice\n- 2) Beta: second choice"
+        self.assertTrue(
+            self.hook._response_has_options(text),
+            "- 1) format should match",
+        )
+
+    def test_star_bullet_then_number_matches(self) -> None:
+        """'* 1) Title' (asterisk bullet before number) is detected."""
+        text = "Options:\n* 1) Alpha: first\n* 2) Beta: second"
+        self.assertTrue(
+            self.hook._response_has_options(text),
+            "* 1) format should match",
+        )
+
+    # ---- Negative (must NOT match) -------------------------------------------
+
+    def test_bullet_no_number_no_match(self) -> None:
+        """'- Option A' (bullet without number) does not match."""
+        text = "- Option A: something\n- Option B: something else"
+        self.assertFalse(
+            self.hook._response_has_options(text),
+            "plain bullet without number should not match",
+        )
+
+    def test_bare_marker_nothing_after_no_match(self) -> None:
+        """'1) ' with nothing after (trailing space only) does not match."""
+        text = "1) "
+        self.assertFalse(
+            self.hook._response_has_options(text),
+            "bare marker with no following content should not match",
+        )
+
+    def test_mid_sentence_number_no_match(self) -> None:
+        """A number mid-sentence ('There are 3) reasons') does not match."""
+        text = "There are 3) reasons why this is good."
+        self.assertFalse(
+            self.hook._response_has_options(text),
+            "mid-sentence number should not match",
+        )
+
+    def test_plain_prose_no_match(self) -> None:
+        """Plain prose without any numbered marker does not match."""
+        text = "I recommend doing X because of Y. You should also consider Z."
+        self.assertFalse(
+            self.hook._response_has_options(text),
+            "plain prose should not match",
+        )
+
+
+# ---------------------------------------------------------------------------
+# 11. Fix 3 — opportunistic prune of stale session counter files
+# ---------------------------------------------------------------------------
+
+
+import time  # noqa: E402  (import inside module is fine for tests)
+
+
+class TestStaleCounterPrune(McCoercionTestBase):
+    """Fix 3: counter files older than 7 days are pruned when the state dir
+    is accessed.  Fresh files are kept; the prune never raises."""
+
+    def test_old_counter_pruned_new_counter_kept(self) -> None:
+        """File >7 days old is deleted; file created just now is kept."""
+        # Create an "old" counter file and back-date its mtime by 8 days.
+        old_file = self.state_dir / "old-session"
+        old_file.write_text("1", encoding="utf-8")
+        eight_days_ago = time.time() - (8 * 24 * 3600)
+        os.utime(str(old_file), (eight_days_ago, eight_days_ago))
+
+        # Create a fresh counter file (mtime = now).
+        fresh_file = self.state_dir / "fresh-session"
+        fresh_file.write_text("0", encoding="utf-8")
+
+        # Trigger the prune by calling _mc_state_dir() (the access point
+        # that the hook calls every time it reads/writes state).
+        self.hook._mc_state_dir()
+
+        self.assertFalse(old_file.exists(), "8-day-old counter file should be pruned")
+        self.assertTrue(fresh_file.exists(), "fresh counter file should be kept")
+
+    def test_prune_does_not_raise_on_permission_error(self) -> None:
+        """A prune failure (e.g. permission error) must never crash the hook."""
+        # We simulate a prune that fails by patching os.remove/Path.unlink.
+        # The hook must not raise.
+        with patch("os.unlink", side_effect=OSError("permission denied")):
+            try:
+                self.hook._mc_state_dir()
+            except Exception as exc:  # pragma: no cover
+                self.fail(f"_mc_state_dir raised unexpectedly: {exc}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

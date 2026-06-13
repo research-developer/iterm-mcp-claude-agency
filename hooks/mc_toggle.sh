@@ -11,9 +11,9 @@
 #
 # No daemon restart is needed; hook scripts re-check the file each invocation.
 #
-# Browser seam: the dashboard could expose POST /api/mc-toggle that calls
-# this script (or directly touches/removes the flag file). See the TODO
-# comment in core/dashboard.py near the /api/answer route.
+# Browser seam: a future POST /api/mc-toggle route could be added near
+# /api/answer to let the browser driver flip the flag (touch/rm the file)
+# without a shell invocation.  core/dashboard.py is not modified by this PR.
 
 set -euo pipefail
 

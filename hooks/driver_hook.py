@@ -63,8 +63,11 @@ PRETOOLUSE_OPTIONS = [
 #   1) Title: description
 #   1. Title: description
 #   (1) Title: description
+#   **1)** Title: description    (bolded marker)
+#   **1. Title: desc**           (whole line bolded)
+#   - 1) Title: description      (leading bullet)
 # At least one such line anywhere in the assistant turn passes detection.
-OPTION_PATTERN = re.compile(r'^\s*(?:\d+[.)]\s+|\(\d+\)\s+)\S', re.MULTILINE)
+OPTION_PATTERN = re.compile(r'^\s*(?:[-*]\s+)?\*{0,2}(?:\d+[.)]|\(\d+\))\*{0,2}\s+\S', re.MULTILINE)
 
 # The instruction injected into every UserPromptSubmit when MC coercion is ON.
 # Written to agree exactly with OPTION_PATTERN so a complying Claude passes.
@@ -118,6 +121,10 @@ def _mc_state_dir() -> Path:
     The directory can be overridden via the MC_STATE_DIR environment variable
     so tests can use a temp directory without touching ~/.iterm-mcp.
 
+    Also opportunistically prunes counter files whose mtime is older than
+    7 days.  The prune is cheap (one stat per file) and fully exception-safe:
+    any failure is silently ignored so a broken prune never crashes the hook.
+
     Returns:
         Path to the state directory (created if absent).
     """
@@ -127,6 +134,21 @@ def _mc_state_dir() -> Path:
     else:
         d = Path.home() / ".iterm-mcp" / "mc_reprompt"
     d.mkdir(parents=True, exist_ok=True)
+
+    # Opportunistic prune: remove counter files older than 7 days.
+    import time as _time
+    cutoff = _time.time() - (7 * 24 * 3600)
+    try:
+        for f in d.iterdir():
+            if f.is_file():
+                try:
+                    if f.stat().st_mtime < cutoff:
+                        f.unlink(missing_ok=True)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     return d
 
 
@@ -273,16 +295,20 @@ def build_userpromptsubmit_decision(mc_on: bool) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _read_last_assistant_text(transcript_path: str, max_chars: int = 500) -> str:
+def _read_last_assistant_text(transcript_path: str, max_chars: int | None = 500) -> str:
     """Read the last assistant message text from a Claude Code JSONL transcript.
 
     Args:
         transcript_path: Absolute path to the JSONL transcript file.
-        max_chars: Maximum characters to return from the message.
+        max_chars: Maximum characters to return from the message, or None
+            for no truncation (full text).  Defaults to 500 for the #130
+            dashboard preview; pass None at the MC detection call site so
+            options at the end of long responses are not missed.
 
     Returns:
-        First max_chars characters of the last assistant message, or an
-        empty string if the file cannot be read or has no assistant messages.
+        Up to max_chars characters of the last assistant message (or the
+        full text when max_chars is None), or an empty string if the file
+        cannot be read or has no assistant messages.
     """
     try:
         lines = Path(transcript_path).read_text(encoding="utf-8").splitlines()
@@ -311,7 +337,7 @@ def _read_last_assistant_text(transcript_path: str, max_chars: int = 500) -> str
                     parts.append(block.get("text", ""))
             last_text = " ".join(parts)
 
-    return last_text[:max_chars]
+    return last_text if max_chars is None else last_text[:max_chars]
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +420,9 @@ def run_stop_hook(stdin_data: dict) -> None:
         transcript_path = stdin_data.get("transcript_path", "")
         session_id = stdin_data.get("session_id", "")
 
-        last_text = _read_last_assistant_text(transcript_path) if transcript_path else ""
+        # Use max_chars=None to scan the FULL assistant text — options may
+        # appear well past char 500 in long responses.
+        last_text = _read_last_assistant_text(transcript_path, max_chars=None) if transcript_path else ""
         reprompt_count = _read_reprompt_count(session_id)
 
         if not _response_has_options(last_text) and reprompt_count < 1:

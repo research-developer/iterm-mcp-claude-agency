@@ -27,8 +27,9 @@ operators can see exactly what Claude thinks the options are.
 - **Absent** → OFF; all hooks behave exactly as #130.
 - No daemon restart needed; hooks re-stat the file each invocation.
 - Toggle script: `hooks/mc_toggle.sh on|off|status`.
-- Optional future: `/api/mc-toggle` endpoint on `core/dashboard.py` so the
-  browser tile can flip it live. (Seam left in code with a TODO comment.)
+- Optional future: a future `POST /api/mc-toggle` route could be added near
+  `/api/answer` to let the browser driver flip the flag.  `core/dashboard.py`
+  is not modified by this PR — adding the route is a separate concern.
 
 ### Layer 2 — UserPromptSubmit hook (soft injection)
 
@@ -166,9 +167,10 @@ dashboard, so operators get sensible tiles even when Claude ignores the format.
 
 ## Toggle — Browser Seam
 
-`core/dashboard.py` has a commented-out route `# TODO: /api/mc-toggle` between
-the `/api/answer` and `/api/db/*` routes. Implementing it is low-effort (touch
-or rm the flag file) but deferred to keep this PR focused on the hook layer.
+A future `POST /api/mc-toggle` route could be added near `/api/answer` to let
+the browser driver flip the flag (touch or rm the flag file) without a shell
+invocation.  `core/dashboard.py` is not modified by this PR — the route is
+deferred to keep this PR focused on the hook layer.
 
 ---
 
