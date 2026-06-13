@@ -1,0 +1,29 @@
+{
+  "_comment": "Example Claude Code hooks configuration for ControIDE Phase-0 driver. Copy the relevant hooks into your project's .claude/settings.json. The Stop hook blocks with a 600s timeout so the human has time to decide; the PreToolUse hook uses 60s. Both fall back safely if the dashboard is not running.",
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/stop.sh",
+            "timeout": 600
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/pretooluse.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
