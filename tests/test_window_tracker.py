@@ -5,20 +5,28 @@ iTerm2 objects — no live iTerm2 connection is required.
 
 The safety-critical part is ``close_tagged_sessions``: it must ONLY close
 sessions whose ``user.mcp_test_run`` variable matches the given tag (or,
-with prefix_sweep, whose profile name starts with ``MCP-TEST·``).  Any
+with prefix_sweep, whose profile name starts with ``"MCP-TEST"``).  Any
 session without a matching marker must be left untouched.
+
+``ensure_test_profile`` tests point at a temp dir so the real iTerm2
+DynamicProfiles directory is never written during testing.
 """
 
 import asyncio
+import json
 import os
 import re
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from core.test_window_tracker import (
     TAG_PREFIX,
+    TEST_PROFILE_NAME,
     _parse_tag,
     close_tagged_sessions,
+    ensure_test_profile,
     make_run_tag,
     mark_session,
 )
@@ -348,6 +356,148 @@ class TestCloseTaggedSessionsRobustness(unittest.IsolatedAsyncioTestCase):
 
         count = await self._run_close(app)
         self.assertEqual(count, 2)
+
+
+# ---------------------------------------------------------------------------
+# ensure_test_profile
+# ---------------------------------------------------------------------------
+
+class TestEnsureTestProfile(unittest.TestCase):
+    """Tests for ensure_test_profile() — filesystem writes go to a temp dir."""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp()
+        self._profiles_dir = Path(self._tmp) / "DynamicProfiles"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_writes_profile_file(self):
+        """ensure_test_profile() must create the profile JSON file."""
+        path = ensure_test_profile(profiles_dir=self._profiles_dir)
+        self.assertTrue(path.exists(), "Profile file should exist after ensure_test_profile()")
+
+    def test_profile_contains_mcp_test_name(self):
+        """The written profile must contain the MCP-TEST profile name."""
+        ensure_test_profile(profiles_dir=self._profiles_dir)
+        files = list(self._profiles_dir.glob("*.json"))
+        self.assertEqual(len(files), 1, "Exactly one JSON file should be written")
+        data = json.loads(files[0].read_text())
+        names = [p["Name"] for p in data.get("Profiles", [])]
+        self.assertIn(TEST_PROFILE_NAME, names, f"Expected 'MCP-TEST' in profiles; got {names}")
+
+    def test_idempotent_does_not_overwrite(self):
+        """A second call must not overwrite the file (idempotent)."""
+        ensure_test_profile(profiles_dir=self._profiles_dir)
+        target = self._profiles_dir / "iterm-mcp-test-profile.json"
+        first_mtime = target.stat().st_mtime
+
+        ensure_test_profile(profiles_dir=self._profiles_dir)
+        second_mtime = target.stat().st_mtime
+
+        self.assertEqual(
+            first_mtime,
+            second_mtime,
+            "ensure_test_profile() must not touch the file if it already exists",
+        )
+
+    def test_creates_directory_if_missing(self):
+        """ensure_test_profile() must create the DynamicProfiles directory."""
+        nested = Path(self._tmp) / "nested" / "DynamicProfiles"
+        self.assertFalse(nested.exists())
+        ensure_test_profile(profiles_dir=nested)
+        self.assertTrue(nested.exists(), "Directory should be created")
+
+    def test_tolerates_write_failure(self):
+        """ensure_test_profile() must not raise even if the write fails."""
+        # Point at a file (not a dir) so the mkdir will fail on the JSON write.
+        bogus = Path("/dev/null/cannot_create_dir")
+        # Should not raise — just logs a warning.
+        ensure_test_profile(profiles_dir=bogus)
+
+    def test_profile_has_distinctive_badge(self):
+        """MCP-TEST profile must carry the 'MCP-TEST' badge for visual ID."""
+        ensure_test_profile(profiles_dir=self._profiles_dir)
+        files = list(self._profiles_dir.glob("*.json"))
+        data = json.loads(files[0].read_text())
+        test_profile = next(
+            (p for p in data.get("Profiles", []) if p.get("Name") == TEST_PROFILE_NAME),
+            None,
+        )
+        self.assertIsNotNone(test_profile, "MCP-TEST entry not found in Profiles list")
+        self.assertEqual(
+            test_profile.get("Badge Text"),
+            "MCP-TEST",
+            "Badge Text must be 'MCP-TEST' for visual identification",
+        )
+
+
+# ---------------------------------------------------------------------------
+# prefix_sweep broadened to startswith("MCP-TEST")
+# ---------------------------------------------------------------------------
+
+class TestPrefixSweepBroadened(unittest.IsolatedAsyncioTestCase):
+    """The prefix_sweep must match both 'MCP-TEST' and 'MCP-TEST·…' profiles
+    but NEVER touch production profiles ('MCP Agent', 'MCP Team: …')."""
+
+    _TAG = "MCP-TEST·42-aabbccdd"
+
+    async def _run_close(self, app, *, prefix_sweep=False):
+        conn = MagicMock()
+        with patch(
+            "core.test_window_tracker.iterm2.async_get_app",
+            AsyncMock(return_value=app),
+        ):
+            return await close_tagged_sessions(conn, self._TAG, prefix_sweep=prefix_sweep)
+
+    async def test_prefix_sweep_matches_stable_profile_name(self):
+        """With prefix_sweep, a session with the stable 'MCP-TEST' profile is closed."""
+        s = _make_session("s1", var_value="", profile_name="MCP-TEST")
+        app = _make_app(s)
+        count = await self._run_close(app, prefix_sweep=True)
+        self.assertEqual(count, 1)
+        s.async_close.assert_called_once_with(force=True)
+
+    async def test_prefix_sweep_matches_tagged_variant_profile(self):
+        """With prefix_sweep, 'MCP-TEST·orphan' profile is still closed."""
+        s = _make_session("s1", var_value="", profile_name="MCP-TEST·crashed-abc")
+        app = _make_app(s)
+        count = await self._run_close(app, prefix_sweep=True)
+        self.assertEqual(count, 1)
+        s.async_close.assert_called_once_with(force=True)
+
+    async def test_prefix_sweep_never_matches_mcp_agent(self):
+        """'MCP Agent' must NEVER be closed by prefix_sweep."""
+        s = _make_session("s1", var_value="", profile_name="MCP Agent")
+        app = _make_app(s)
+        count = await self._run_close(app, prefix_sweep=True)
+        self.assertEqual(count, 0)
+        s.async_close.assert_not_called()
+
+    async def test_prefix_sweep_never_matches_mcp_team(self):
+        """'MCP Team: Engineering' must NEVER be closed by prefix_sweep."""
+        s = _make_session("s1", var_value="", profile_name="MCP Team: Engineering")
+        app = _make_app(s)
+        count = await self._run_close(app, prefix_sweep=True)
+        self.assertEqual(count, 0)
+        s.async_close.assert_not_called()
+
+    async def test_prefix_sweep_never_matches_mcp_team_colon_only(self):
+        """'MCP Team:' (no name) must NEVER be closed by prefix_sweep."""
+        s = _make_session("s1", var_value="", profile_name="MCP Team:")
+        app = _make_app(s)
+        count = await self._run_close(app, prefix_sweep=True)
+        self.assertEqual(count, 0)
+        s.async_close.assert_not_called()
+
+    async def test_prefix_sweep_never_matches_default(self):
+        """'Default' profile must NEVER be closed by prefix_sweep."""
+        s = _make_session("s1", var_value="", profile_name="Default")
+        app = _make_app(s)
+        count = await self._run_close(app, prefix_sweep=True)
+        self.assertEqual(count, 0)
+        s.async_close.assert_not_called()
 
 
 if __name__ == "__main__":

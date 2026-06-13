@@ -7,21 +7,44 @@ Tag format: ``MCP-TEST·<pid>-<uuid8>``
 
 Usage example::
 
-    from core.test_window_tracker import make_run_tag, mark_session, close_tagged_sessions
+    from core.test_window_tracker import (
+        make_run_tag, mark_session, close_tagged_sessions,
+        ensure_test_profile,
+    )
 
     tag = make_run_tag()
+
+    # Once at test-suite startup — writes the stable MCP-TEST dynamic profile
+    # (idempotent; skipped if the file already exists with the right content):
+    ensure_test_profile()
 
     # After creating a session:
     await mark_session(raw_iterm2_session, tag)
 
     # In teardown:
     closed = await close_tagged_sessions(connection, tag)
+
+Profile strategy
+----------------
+``ensure_test_profile()`` writes a stable ``MCP-TEST`` iTerm2 Dynamic Profile
+to ``~/Library/Application Support/iTerm2/DynamicProfiles/iterm-mcp-test-profile.json``
+exactly once.  The profile has a distinctive orange badge and background tint
+so test windows are immediately eyeball-trackable.
+
+Because iTerm2 may not reload the profile synchronously after the file is
+written, ``create_window(profile="MCP-TEST")`` falls back to the default
+profile if ``MCP-TEST`` is not loaded yet.  That is acceptable — the
+``user.mcp_test_run`` variable set unconditionally after window creation
+remains the functional teardown key, so every test window is closeable even
+if it missed the profile.
 """
 
+import json
 import os
 import re
 import uuid
 import logging
+from pathlib import Path
 from typing import Optional
 
 import iterm2
@@ -31,6 +54,88 @@ log = logging.getLogger("iterm-mcp.test-tracker")
 # Stable prefix that identifies any test-opened session by profile name.
 # Production profiles start with "MCP Agent" or "MCP Team:" — never this prefix.
 TAG_PREFIX = "MCP-TEST·"  # middle-dot U+00B7
+
+# ---------------------------------------------------------------------------
+# Stable visible test profile
+# ---------------------------------------------------------------------------
+
+#: Exact name of the stable iTerm2 Dynamic Profile used for test windows.
+TEST_PROFILE_NAME = "MCP-TEST"
+
+#: Stable GUID for the MCP-TEST dynamic profile.  Never changes so iTerm2
+#: can track it across restarts without creating orphan entries.
+_TEST_PROFILE_GUID = "E7A1C3F0-9B2D-4E8A-B5C6-D1F234567890"
+
+#: Path where the single-file dynamic profile is written.
+_DYNAMIC_PROFILES_DIR = Path.home() / "Library/Application Support/iTerm2/DynamicProfiles"
+_TEST_PROFILE_FILE = _DYNAMIC_PROFILES_DIR / "iterm-mcp-test-profile.json"
+
+#: The canonical profile dict.  Written once and never overwritten if already
+#: present, avoiding per-run churn that would trigger iTerm2 reload races.
+_TEST_PROFILE_DATA: dict = {
+    "Profiles": [
+        {
+            "Name": TEST_PROFILE_NAME,
+            "Guid": _TEST_PROFILE_GUID,
+            "Dynamic Profile Parent Name": "Default",
+            # Vivid amber/orange tab colour — stands out from production sessions.
+            "Custom Tab Color": True,
+            "Tab Color": {
+                "Red Component": 0.85,
+                "Green Component": 0.45,
+                "Blue Component": 0.05,
+                "Color Space": "sRGB",
+            },
+            # Human-readable badge so the window label reads "MCP-TEST" even
+            # when the tab is too narrow to show the profile name.
+            "Badge Text": "MCP-TEST",
+            "Tags": ["mcp", "test"],
+        }
+    ]
+}
+
+
+def ensure_test_profile(
+    profiles_dir: Optional[Path] = None,
+) -> Path:
+    """Write the stable ``MCP-TEST`` iTerm2 Dynamic Profile if not present.
+
+    Idempotent: if the file already exists it is NOT overwritten, so there is
+    no per-run reload race in iTerm2.  Create the DynamicProfiles directory
+    if it does not exist (mirrors what ``ProfileManager`` does).
+
+    Args:
+        profiles_dir: Override the DynamicProfiles directory (used in tests to
+            point at a temp dir instead of the real user library).
+
+    Returns:
+        Path to the profile file (written or pre-existing).
+    """
+    target_dir = profiles_dir or _DYNAMIC_PROFILES_DIR
+    target_file = target_dir / "iterm-mcp-test-profile.json"
+
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        if target_file.exists():
+            log.debug("ensure_test_profile: profile file already exists at %s", target_file)
+            return target_file
+
+        target_file.write_text(json.dumps(_TEST_PROFILE_DATA, indent=2))
+        log.info(
+            "ensure_test_profile: wrote MCP-TEST dynamic profile to %s "
+            "(iTerm2 will load it shortly; first window may fall back to default profile)",
+            target_file,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "ensure_test_profile: could not write profile file to %s: %s "
+            "(test windows will still open and be tagged for teardown)",
+            target_file,
+            exc,
+        )
+
+    return target_file
 
 
 def make_run_tag() -> str:
@@ -121,10 +226,13 @@ async def close_tagged_sessions(
                     )
 
                 # --- secondary check: profile name prefix (orphan sweep) ---
+                # Match both the stable "MCP-TEST" profile name AND per-run
+                # "MCP-TEST·…" variants.  Production profiles ("MCP Agent",
+                # "MCP Team: …") never start with "MCP-TEST".
                 if not should_close and prefix_sweep:
                     try:
                         prof = await session.async_get_profile()
-                        if prof.name.startswith(TAG_PREFIX):
+                        if prof.name.startswith("MCP-TEST"):
                             should_close = True
                     except Exception as exc:  # noqa: BLE001
                         log.debug(
