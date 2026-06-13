@@ -72,7 +72,9 @@ from core.terminal import ItermTerminal
 from core.session import ItermSession
 from core.test_window_tracker import (
     TAG_PREFIX,
+    TEST_PROFILE_NAME,
     close_tagged_sessions,
+    ensure_test_profile,
     make_run_tag,
     mark_session,
 )
@@ -102,10 +104,19 @@ class LiveItermTestCase(unittest.IsolatedAsyncioTestCase):
     async def async_setup(self) -> None:
         """Establish an iTerm2 connection and set up the tagged terminal.
 
+        Writes the stable ``MCP-TEST`` Dynamic Profile (idempotent) before
+        creating any window, giving iTerm2 the best chance of loading it
+        before the first ``create_window`` call.  Even if the profile isn't
+        loaded yet, ``create_window`` falls back to the default profile and
+        the ``user.mcp_test_run`` variable still guarantees teardown.
+
         Subclasses must call ``await super().async_setup()`` first.
         """
         self._log_dir = tempfile.mkdtemp()
         self._tag = make_run_tag()
+
+        # Write the stable MCP-TEST profile (idempotent — no-op if already there).
+        ensure_test_profile()
 
         try:
             self.connection = await iterm2.Connection.async_create()
@@ -136,15 +147,19 @@ class LiveItermTestCase(unittest.IsolatedAsyncioTestCase):
         profile: Optional[str] = None,
         name: Optional[str] = None,
     ) -> ItermSession:
-        """Create a new iTerm2 window and tag it for teardown.
+        """Create a new iTerm2 window under the ``MCP-TEST`` profile and tag it.
 
-        Calls :meth:`~core.terminal.ItermTerminal.create_window` and
-        immediately sets ``user.mcp_test_run = self._tag`` on the raw
-        iTerm2 session so that :func:`~core.test_window_tracker.close_tagged_sessions`
-        will close it.
+        Opens the window under the stable ``MCP-TEST`` Dynamic Profile so that
+        test windows are visually distinct (amber tab colour, "MCP-TEST" badge).
+        The ``user.mcp_test_run`` variable is set unconditionally immediately
+        after creation — this is the primary teardown key and works even if
+        iTerm2 hasn't loaded the ``MCP-TEST`` profile yet (in which case
+        ``create_window`` falls back to the default profile silently).
 
         Args:
-            profile: Optional iTerm2 profile name.
+            profile: Override the profile name.  Defaults to ``TEST_PROFILE_NAME``
+                (``"MCP-TEST"``).  Pass ``None`` explicitly to use the default
+                iTerm2 profile, or any other profile name to use that instead.
             name: Optional name to set on the session after creation.
 
         Returns:
@@ -153,8 +168,10 @@ class LiveItermTestCase(unittest.IsolatedAsyncioTestCase):
         Raises:
             AssertionError: If the window could not be created.
         """
+        # Default to the stable MCP-TEST profile for visual identifiability.
+        effective_profile = profile if profile is not None else TEST_PROFILE_NAME
         try:
-            session = await self.terminal.create_window(profile=profile)
+            session = await self.terminal.create_window(profile=effective_profile)
         except Exception as exc:
             self.fail(f"create_tagged_window: failed to create window: {exc}")
 
