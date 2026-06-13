@@ -1,6 +1,18 @@
 {
-  "_comment": "Example Claude Code hooks configuration for ControIDE Phase-0 driver. Copy the relevant hooks into your project's .claude/settings.json. The Stop hook blocks with a 600s timeout so the human has time to decide; the PreToolUse hook uses 60s. Both fall back safely if the dashboard is not running.",
+  "_comment": "Example Claude Code hooks configuration for ControIDE Phase-0 driver + MC coercion. Copy the relevant hooks into your project's .claude/settings.json. The Stop hook blocks with a 600s timeout so the human has time to decide; the PreToolUse hook uses 60s. UserPromptSubmit is fast (flag-file check only, no HTTP). All hooks fall back safely if the dashboard is not running or the flag is absent.",
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/userpromptsubmit.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
