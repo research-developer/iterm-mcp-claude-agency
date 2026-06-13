@@ -16,67 +16,27 @@ from core.session import (
     ExpectError,
     ExpectTimeoutError,
 )
+from tests.live_iterm_base import LiveItermTestCase
 
 
-class TestExpectPatternMatching(unittest.TestCase):
-    """Test expect-style pattern matching functionality."""
-
-    def setUp(self):
-        """Set up a temporary directory for logs."""
-        self.temp_dir = tempfile.mkdtemp()
-
-    def tearDown(self):
-        """Clean up the temporary directory."""
-        shutil.rmtree(self.temp_dir)
+class TestExpectPatternMatching(LiveItermTestCase):
+    """Test expect-style pattern matching functionality (live iTerm2 required)."""
 
     async def async_setup(self):
         """Set up the test environment."""
-        try:
-            # Connect to iTerm2
-            self.connection = await iterm2.Connection.async_create()
+        await super().async_setup()
 
-            # Initialize terminal with logging enabled
-            self.terminal = ItermTerminal(
-                connection=self.connection,
-                log_dir=self.temp_dir,
-                enable_logging=True
-            )
-            await self.terminal.initialize()
-
-            # Create a test window
-            self.test_session = await self.terminal.create_window()
-            if self.test_session:
-                await self.test_session.set_name("ExpectTestSession")
-                # Wait for window to be ready
-                await asyncio.sleep(1)
-            else:
-                self.fail("Failed to create test window")
-        except Exception as e:
-            self.fail(f"Failed to set up test environment: {str(e)}")
+        # Create a tagged test window (auto-closed by run_async_test teardown).
+        self.test_session = await self.create_tagged_window(name="ExpectTestSession")
+        # Wait for window to be ready
+        await asyncio.sleep(1)
 
     async def async_teardown(self):
-        """Clean up the test environment."""
+        """Stop monitoring before base class teardown."""
         if hasattr(self, "test_session"):
             if self.test_session.is_monitoring:
                 await self.test_session.stop_monitoring()
-            await self.terminal.close_session(self.test_session.id)
-
-    def run_async_test(self, coro):
-        """Run an async test function."""
-        async def test_wrapper():
-            try:
-                await self.async_setup()
-                await coro()
-            finally:
-                await self.async_teardown()
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(test_wrapper())
-        finally:
-            loop.close()
-            asyncio.set_event_loop(None)
+        await super().async_teardown()
 
     def test_expect_basic_pattern_match(self):
         """Test basic pattern matching with expect()."""
