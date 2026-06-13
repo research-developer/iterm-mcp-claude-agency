@@ -6,6 +6,7 @@ Provides:
 - SSE /events endpoint for real-time updates
 - REST API endpoints for agent control and database queries
 - SQLite-backed observability data storage
+- ControIDE Phase-0 ask/answer endpoints for human-in-the-loop hooks
 """
 
 import asyncio
@@ -19,6 +20,7 @@ from urllib.parse import unquote, urlparse
 from core.dashboard_db import DashboardDB, get_db
 
 if TYPE_CHECKING:
+    from core.driver import DriverStore
     from core.terminal import ItermTerminal
     from utils.telemetry import TelemetryEmitter
 
@@ -163,6 +165,9 @@ class DashboardServer:
         self._update_interval = 1.0  # seconds between SSE updates
         self._running = False
         self._db: Optional[DashboardDB] = None
+        # DriverStore is created lazily inside an async context because
+        # asyncio.Event objects must be created in a running event loop.
+        self._driver_store: Optional["DriverStore"] = None
 
     @property
     def db(self) -> DashboardDB:
@@ -289,6 +294,11 @@ class DashboardServer:
                 await self._handle_focus(writer, query_params)
             elif url_path == "/api/send":
                 await self._handle_send(writer, query_params, reader, headers)
+            # ControIDE Phase-0 human-in-the-loop endpoints
+            elif url_path == "/api/ask":
+                await self._handle_ask(writer, reader, headers)
+            elif url_path == "/api/answer":
+                await self._handle_answer(writer, reader, headers)
             # Database API routes
             elif url_path == "/api/db/responses":
                 await self._handle_db_responses(writer, query_params, reader, headers)
@@ -593,6 +603,211 @@ class DashboardServer:
             return "idle"
         except Exception:
             return "unknown"
+
+    # -------------------------------------------------------------------------
+    # ControIDE Phase-0: human-in-the-loop ask/answer endpoints
+    # -------------------------------------------------------------------------
+
+    def _get_driver_store(self) -> "DriverStore":
+        """Lazily create and return the DriverStore singleton.
+
+        Must be called from an async context (running event loop) because
+        asyncio.Event objects must be created within a running loop.
+
+        Returns:
+            The shared DriverStore for this server instance.
+        """
+        if self._driver_store is None:
+            from core.driver import DriverStore
+            self._driver_store = DriverStore()
+        return self._driver_store
+
+    async def _send_sse_named_event(
+        self,
+        writer: asyncio.StreamWriter,
+        event_type: str,
+        data: dict,
+    ) -> None:
+        """Send a named SSE event to a single client.
+
+        Args:
+            writer: The SSE client stream writer.
+            event_type: The SSE event type string (e.g. "question", "cleared").
+            data: Dict payload serialized as JSON in the data field.
+        """
+        payload = json.dumps(data, default=str)
+        event = f"event: {event_type}\ndata: {payload}\n\n"
+        writer.write(event.encode())
+        await writer.drain()
+
+    async def _broadcast_named_event(self, event_type: str, data: dict) -> None:
+        """Broadcast a named SSE event to all connected SSE clients.
+
+        Disconnected clients are removed from _sse_clients.
+
+        Args:
+            event_type: The SSE event type string.
+            data: Dict payload to broadcast.
+        """
+        disconnected = []
+        for client in self._sse_clients:
+            try:
+                await self._send_sse_named_event(client, event_type, data)
+            except (ConnectionResetError, BrokenPipeError, OSError):
+                disconnected.append(client)
+        for client in disconnected:
+            if client in self._sse_clients:
+                self._sse_clients.remove(client)
+
+    async def _handle_ask(
+        self,
+        writer: asyncio.StreamWriter,
+        reader: asyncio.StreamReader,
+        headers: Dict[str, str],
+    ) -> None:
+        """Handle POST /api/ask — called by hook scripts; blocks until answered.
+
+        Request body (JSON):
+            hook_type (str): "stop" or "pretooluse"
+            prompt (str): Human-readable summary of the pending action.
+            options (list): [{"id": str, "label": str, "text": str}, ...]
+            timeout (float, optional): Seconds to wait (default 120).
+
+        Response (JSON, after human answers):
+            {"choice_id": str, "choice_text": str, "custom_text": str|None}
+
+        Response on timeout: HTTP 408 {"error": "timeout"}
+        Response on bad request: HTTP 400 {"error": "..."}
+        """
+        MAX_BODY_SIZE = 64 * 1024
+
+        content_length = int(headers.get("content-length", 0))
+        if content_length > MAX_BODY_SIZE:
+            body = json.dumps({"error": "Request body too large"}).encode()
+            await self._send_response(writer, 413, "application/json", body)
+            return
+
+        if content_length <= 0:
+            body = json.dumps({"error": "Missing request body"}).encode()
+            await self._send_response(writer, 400, "application/json", body)
+            return
+
+        raw = await reader.read(content_length)
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            body = json.dumps({"error": f"Invalid JSON: {exc}"}).encode()
+            await self._send_response(writer, 400, "application/json", body)
+            return
+
+        hook_type = data.get("hook_type", "")
+        prompt = data.get("prompt", "")
+        options = data.get("options", [])
+        timeout = float(data.get("timeout", 120.0))
+
+        if hook_type not in ("stop", "pretooluse"):
+            body = json.dumps({"error": "hook_type must be 'stop' or 'pretooluse'"}).encode()
+            await self._send_response(writer, 400, "application/json", body)
+            return
+
+        store = self._get_driver_store()
+        question = store.post_question(hook_type=hook_type, prompt=prompt, options=options)
+
+        # Broadcast the question to all connected driver pages.
+        await self._broadcast_named_event("question", {
+            "id": question.id,
+            "hook_type": question.hook_type,
+            "prompt": question.prompt,
+            "options": question.options,
+        })
+
+        logger.info(f"[driver] Question posted: id={question.id} hook_type={hook_type}")
+
+        answer = await store.wait_for_answer(question.id, timeout=timeout)
+
+        if answer is None:
+            body = json.dumps({"error": "timeout"}).encode()
+            await self._send_response(writer, 408, "application/json", body)
+            return
+
+        # Look up the label/text for the chosen option.
+        choice_text = ""
+        for opt in options:
+            if opt.get("id") == answer["choice_id"]:
+                choice_text = opt.get("text", opt.get("label", ""))
+                break
+
+        response_data = {
+            "choice_id": answer["choice_id"],
+            "choice_text": choice_text,
+            "custom_text": answer.get("custom_text"),
+        }
+        body = json.dumps(response_data).encode()
+        await self._send_response(writer, 200, "application/json", body)
+        logger.info(f"[driver] Question answered: id={question.id} choice={answer['choice_id']}")
+
+    async def _handle_answer(
+        self,
+        writer: asyncio.StreamWriter,
+        reader: asyncio.StreamReader,
+        headers: Dict[str, str],
+    ) -> None:
+        """Handle POST /api/answer — called by the browser tile click.
+
+        Request body (JSON):
+            id (str): The question UUID.
+            choice_id (str): The chosen option id.
+            custom_text (str|None, optional): Free text for custom choices.
+
+        Response (JSON):
+            {"success": true}
+
+        Response when question not found: HTTP 404 {"error": "Question not found"}
+        """
+        MAX_BODY_SIZE = 4 * 1024
+
+        content_length = int(headers.get("content-length", 0))
+        if content_length > MAX_BODY_SIZE:
+            body = json.dumps({"error": "Request body too large"}).encode()
+            await self._send_response(writer, 413, "application/json", body)
+            return
+
+        if content_length <= 0:
+            body = json.dumps({"error": "Missing request body"}).encode()
+            await self._send_response(writer, 400, "application/json", body)
+            return
+
+        raw = await reader.read(content_length)
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            body = json.dumps({"error": f"Invalid JSON: {exc}"}).encode()
+            await self._send_response(writer, 400, "application/json", body)
+            return
+
+        question_id = data.get("id", "")
+        choice_id = data.get("choice_id", "")
+        custom_text = data.get("custom_text")
+
+        if not question_id or not choice_id:
+            body = json.dumps({"error": "Missing 'id' or 'choice_id'"}).encode()
+            await self._send_response(writer, 400, "application/json", body)
+            return
+
+        store = self._get_driver_store()
+        answered = store.answer_question(question_id, choice_id, custom_text)
+
+        if not answered:
+            body = json.dumps({"error": "Question not found"}).encode()
+            await self._send_response(writer, 404, "application/json", body)
+            return
+
+        # Notify all driver pages that the question has been cleared.
+        await self._broadcast_named_event("cleared", {"id": question_id})
+
+        body = json.dumps({"success": True}).encode()
+        await self._send_response(writer, 200, "application/json", body)
+        logger.info(f"[driver] Answer received: id={question_id} choice={choice_id}")
 
     async def _send_response(
         self,
