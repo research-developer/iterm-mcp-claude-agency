@@ -11,7 +11,7 @@ A Python implementation for controlling iTerm2 terminal sessions with support fo
 
 ✅ **Multi-Pane Orchestration** - Parallel session operations with agent/team targeting  
 ✅ **Agent Registry** - Complete agent and team management with cascading messages  
-✅ **Test Coverage** - 98 passing tests with 27.77% code coverage  
+✅ **Test Coverage** - per-module suite via `scripts/test_baseline.py` (36 modules passing; 7 live-iTerm2 integration modules need an interactive session)  
 ✅ **CI/CD** - Automated testing with coverage reporting
 
 See [EPIC_STATUS.md](docs/archive/EPIC_STATUS.md) for the historical implementation status of the multi-agent orchestration epic.
@@ -35,7 +35,7 @@ See [EPIC_STATUS.md](docs/archive/EPIC_STATUS.md) for the historical implementat
 
 - Python 3.8+
 - iTerm2 3.3+ with Python API enabled
-- MCP Python SDK (1.3.0+)
+- MCP Python SDK (1.8.0+, for streamable-HTTP daemon mode)
 
 ## Installation
 
@@ -131,7 +131,7 @@ mcp dev iterm_mcpy/fastmcp_server.py
 ### Important Implementation Notes
 
 1. **Process Termination**:  
-   The server uses SIGKILL for termination to prevent hanging on exit. This ensures clean exit but bypasses Python's normal cleanup process. If you're developing and need proper cleanup, modify the signal handler in `main.py`.
+   The daemon translates SIGTERM into a clean `SystemExit` so `iterm-mcp stop` (and plain `kill`) clears the `~/.iterm-mcp/daemon.json` state file on the way out. The state-file cleanup is pid-guarded so an old daemon's exit never deletes a successor's registration.
 
 2. **New FastMCP API**:  
    The FastMCP implementation uses the decorator-based API from the official MCP Python SDK. Tools are defined with `@mcp.tool()`, resources with `@mcp.resource()`, and prompts with `@mcp.prompt()`.
