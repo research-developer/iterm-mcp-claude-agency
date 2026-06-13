@@ -20,6 +20,9 @@ import anyio
 
 from iterm_mcpy.daemon import STATE_DIR, package_version, read_state
 
+# Generous wait for a SIGTERM'd stale daemon to exit; it may need to flush state.
+_SIGTERM_WAIT = 5.0
+
 
 def probe_health(state: dict):
     """GET /health; return parsed body or None if unreachable/broken."""
@@ -69,7 +72,7 @@ def ensure_daemon(spawn_timeout: float = 20.0, poll_interval: float = 0.25) -> d
         return state
     if health:  # alive but stale version: restart so behavior matches this code
         terminate_daemon(health["pid"])
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + _SIGTERM_WAIT
         while time.monotonic() < deadline and probe_health(state):
             time.sleep(poll_interval)
 
@@ -95,8 +98,24 @@ def ensure_daemon(spawn_timeout: float = 20.0, poll_interval: float = 0.25) -> d
 async def _pump(endpoint: str) -> None:
     """Bidirectional SessionMessage pipe: stdio client <-> HTTP daemon.
 
-    We open both transports in a flat task group so that a cancel from either
-    direction propagates cleanly and unblocks stdio_server's stdin_reader.
+    Cancellation design — do not simplify:
+      stdio_server() internally spawns a stdin_reader coroutine that blocks
+      on `async for line in stdin`. That reader will NOT exit until stdin
+      reaches EOF (which the host process never sends while the session is
+      alive) or until stdio_server's own task group is cancelled.
+
+      When the daemon stream ends (to_client exhausts srv_read), we must:
+        1. Close client_write so the stdout_writer inside stdio_server drains.
+        2. Cancel `outer` — which propagates into stdio_server()'s __aexit__,
+           cancelling its task group and thereby unblocking stdin_reader.
+      Cancelling only the inner `tg` is not enough: stdio_server() has already
+      yielded past the `yield`, so its task group is awaiting __aexit__, which
+      won't return until stdin_reader finishes. Hence the outer wrapper.
+
+    Known limitation: if the daemon exits while stdin is idle (no pending
+    message from the host), the pump does not detect the failure until the
+    host sends its next message. A future fix could add a periodic
+    health-probe task inside `outer`.
     """
     from mcp.client.streamable_http import streamablehttp_client
     from mcp.server.stdio import stdio_server

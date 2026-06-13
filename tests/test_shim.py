@@ -45,6 +45,8 @@ class TestEnsureDaemon(unittest.TestCase):
                  "version": "0.1.0"}
         # probe sequence: stale health (version mismatch) -> None (confirms the
         # SIGTERM'd daemon is gone) -> fresh health in the post-spawn poll.
+        # read_state's second value is None: after SIGTERM the daemon clears
+        # its state file, so the under-lock recheck finds nothing.
         with mock.patch.object(shim, "read_state", side_effect=[stale, None, fresh]), \
              mock.patch.object(shim, "probe_health",
                                side_effect=[{"status": "ok", "version": "0.0.9", "pid": 999},
