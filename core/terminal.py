@@ -185,12 +185,24 @@ class ItermTerminal:
         # Return the matching ItermSession wrapper
         return self.sessions.get(iterm_session.session_id)
 
-    async def create_window(self, profile: Optional[str] = None) -> ItermSession:
+    async def create_window(
+        self,
+        profile: Optional[str] = None,
+        foreground: bool = False,
+    ) -> ItermSession:
         """Create a new iTerm2 window.
+
+        By default the new window opens in the background: focus is
+        restored to whichever window was frontmost before the call. Pass
+        ``foreground=True`` to preserve the old behaviour where the new
+        window becomes the active window within iTerm2.
 
         Args:
             profile: Optional profile name to use. If None, uses the "MCP Agent"
                      profile if it exists, otherwise the default profile.
+            foreground: If True, the new window becomes the active window (old
+                        default behaviour). If False (default), focus is restored
+                        to the previously-active window after creation.
 
         Returns:
             The session for the new window
@@ -198,10 +210,16 @@ class ItermTerminal:
         if not self.app:
             raise RuntimeError("Terminal not initialized")
 
+        # Capture the currently-active window so we can restore focus afterward
+        # when opening in the background.  May be None if no window is open.
+        previous_window = self.app.current_terminal_window if not foreground else None
+
         # Use MCP Agent profile by default if available
         profile_to_use = profile or "MCP Agent"
 
-        # Create a new window with the specified profile
+        # Create a new window with the specified profile.
+        # async_create always makes the new window the key/front window within
+        # iTerm2; the restore call below counteracts that for background opens.
         try:
             window = await iterm2.Window.async_create(
                 connection=self.connection,
@@ -210,6 +228,26 @@ class ItermTerminal:
         except Exception:
             # Fall back to default profile if the specified profile doesn't exist
             window = await iterm2.Window.async_create(connection=self.connection)
+
+        # Restore focus to the previously-active window when opening in the
+        # background.  We skip restoration if:
+        #   • foreground=True  (caller wants the new window to be front)
+        #   • previous_window is None  (no window was open before)
+        #   • previous_window is the same object as the new window (shouldn't
+        #     happen in practice but guards against a no-op activate storm)
+        if (
+            not foreground
+            and previous_window is not None
+            and previous_window is not window
+        ):
+            try:
+                await previous_window.async_activate()
+            except Exception as exc:  # noqa: BLE001
+                # A focus-restore failure must never break window creation.
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "Background window: failed to restore focus to previous window: %s", exc
+                )
         
         # Get the first session from the window
         tabs = window.tabs
@@ -247,16 +285,23 @@ class ItermTerminal:
     
     async def create_tab(self, window_id: Optional[str] = None) -> ItermSession:
         """Create a new tab in the specified window or current window.
-        
+
+        NOTE: The new tab becomes the active tab within its window after
+        creation. The background-window capture/restore pattern (added to
+        create_window) has not been applied here — tab focus changes are
+        within the same window and are less disruptive. A future extension
+        could add a ``foreground: bool = True`` parameter mirroring the one
+        in create_window.
+
         Args:
             window_id: Optional ID of the window to create the tab in
-            
+
         Returns:
             The session for the new tab
         """
         if not self.app:
             raise RuntimeError("Terminal not initialized")
-            
+
         # Get the window to create the tab in
         window = None
         if window_id:
@@ -314,6 +359,13 @@ class ItermTerminal:
         profile: Optional[str] = None
     ) -> ItermSession:
         """Create a new split pane from an existing session.
+
+        NOTE: The new pane becomes the active pane within its window after
+        creation. The background-window capture/restore pattern (added to
+        create_window) has not been applied here — pane focus changes are
+        within the same window and are less disruptive. A future extension
+        could add a ``foreground: bool = True`` parameter mirroring the one
+        in create_window.
 
         Args:
             session_id: The ID of the session to split
