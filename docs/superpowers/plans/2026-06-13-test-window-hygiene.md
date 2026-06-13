@@ -31,20 +31,46 @@ approach alongside checking the session's profile name prefix.
 
 ## Profile Strategy
 
-**Approach chosen: user variable tagging (option b from brief)**
+**Approach: stable visible profile (primary for human ID) + user variable (primary for programmatic teardown)**
 
-We tag via `session.async_set_variable("user.mcp_test_run", tag)` rather
-than writing a new dynamic profile, because:
+Two complementary mechanisms work together:
 
-1. Writing a dynamic profile requires file I/O + iTerm2 to reload its
-   profile list before the profile name is available — introducing race
-   conditions and timing issues in tests.
-2. User variables are set per-session immediately and are readable back
-   synchronously.
-3. Profile name prefix `MCP-TEST·` is still available for orphan sweeps
-   because we always check both fields; the profile name stays `MCP Agent`
-   (or whatever the test's `create_window` call uses) but the user var
-   confirms ownership.
+### 1. Stable `MCP-TEST` Dynamic Profile (visual identification)
+
+`core/test_window_tracker.ensure_test_profile()` writes a single-file Dynamic
+Profile (`~/Library/Application Support/iTerm2/DynamicProfiles/iterm-mcp-test-profile.json`)
+with a stable GUID.  The profile has:
+- An amber/orange tab colour (visually distinct from `MCP Agent` and `MCP Team:` profiles)
+- Badge text `"MCP-TEST"` (readable even when tabs are narrow)
+
+`ensure_test_profile()` is called once from `LiveItermTestCase.async_setup()`,
+**before** any window is created, giving iTerm2 the best chance to load it.
+It is idempotent — it checks for the file first and skips writing if already present,
+avoiding per-run reload races.
+
+`create_tagged_window()` passes `profile="MCP-TEST"` to `create_window()`.
+`create_window()` already falls back to the default profile on any exception,
+so if iTerm2 hasn't loaded the profile yet the window still opens.
+
+### 2. `user.mcp_test_run` variable (programmatic teardown key)
+
+`mark_session()` sets `session.async_set_variable("user.mcp_test_run", tag)`
+immediately after window creation.  This is the **primary teardown key**:
+
+- Races to zero — no reload lag.
+- Exact-match only — the teardown never closes a window it doesn't own.
+- Works even when the `MCP-TEST` profile hasn't loaded (window opened under default).
+
+### Orphan sweep (`prefix_sweep=True`)
+
+For sessions left over from previously crashed runs (where the profile loaded
+but no variable remains readable), `close_tagged_sessions(prefix_sweep=True)` checks
+whether the profile name `startswith("MCP-TEST")`.  This matches both:
+- `"MCP-TEST"` — the stable profile
+- `"MCP-TEST·…"` — any per-run-named variants (historical / future)
+
+Production profiles (`"MCP Agent"`, `"MCP Team: …"`) never start with `"MCP-TEST"`
+so they are always safe.
 
 ---
 
@@ -150,18 +176,54 @@ All 7 live-iTerm2 integration modules use the same pattern:
 
 ## Unit Tests: `tests/test_window_tracker.py`
 
-Tests `close_tagged_sessions` logic with mock objects (no live iTerm2):
+Tests `close_tagged_sessions` and `ensure_test_profile` with mock/temp objects
+(no live iTerm2 required).  34 tests total.
 
-1. **test_closes_matching_tag** — session with correct tag gets closed
-2. **test_skips_different_tag** — session with wrong tag is NOT closed
-3. **test_skips_no_tag** — session with empty/None variable is NOT closed
-4. **test_skips_on_var_read_error** — session that raises on `async_get_variable` is skipped
-5. **test_prefix_sweep_closes_orphan_profile** — with `prefix_sweep=True`, session whose profile name starts with `MCP-TEST·` is closed
-6. **test_prefix_sweep_skips_normal_profile** — with `prefix_sweep=True`, session with `MCP Agent` profile is NOT closed
-7. **test_returns_correct_count** — count reflects only actually-closed sessions
-8. **test_mark_session_sets_variable** — `mark_session` calls `async_set_variable` with correct args
-9. **test_make_run_tag_format** — tag matches `MCP-TEST·<digits>-<hex8>` pattern
-10. **test_make_run_tag_unique** — two calls produce different tags
+### `make_run_tag` (5 tests)
+- format matches `MCP-TEST·<digits>-<hex8>` pattern
+- embeds current PID
+- two calls differ
+- starts with TAG_PREFIX
+- UUID portion is 8 lowercase hex chars
+
+### `mark_session` (2 tests)
+- calls `async_set_variable("user.mcp_test_run", tag)` correctly
+- tolerates `async_set_variable` failure (no re-raise)
+
+### `close_tagged_sessions` matching (10 tests)
+- closes session with matching tag
+- closes multiple matching sessions
+- `prefix_sweep` closes orphan profile (name starts with `MCP-TEST·`)
+- skips session with different tag
+- skips session with empty tag
+- skips session where variable raises (absent)
+- skips normal profile without prefix_sweep
+- `prefix_sweep` skips `MCP Agent` profile
+- `prefix_sweep` skips `MCP Team: Foo` profile
+- skips session where profile read raises during prefix_sweep
+- mixed batch: only matching session is closed
+
+### `close_tagged_sessions` robustness (4 tests)
+- continues after `async_close` error
+- returns 0 when `async_get_app` fails
+- returns 0 when app has no windows
+- returns correct count
+
+### `ensure_test_profile` (6 tests, filesystem — uses temp dir)
+- writes profile file
+- written profile contains `MCP-TEST` name
+- idempotent: second call does not overwrite
+- creates directory if missing
+- tolerates write failure (no raise)
+- profile has distinctive badge text `"MCP-TEST"`
+
+### `prefix_sweep` broadened matching (6 tests)
+- matches stable `"MCP-TEST"` profile name
+- matches `"MCP-TEST·orphan"` variant
+- NEVER matches `"MCP Agent"`
+- NEVER matches `"MCP Team: Engineering"`
+- NEVER matches `"MCP Team:"` (colon only)
+- NEVER matches `"Default"`
 
 ---
 
