@@ -76,6 +76,7 @@ from core.test_window_tracker import (
     ensure_test_profile,
     make_run_tag,
     mark_session,
+    skip_reason_if_iterm_active,
 )
 
 log = logging.getLogger("iterm-mcp.live-test-base")
@@ -207,6 +208,13 @@ class LiveItermTestCase(unittest.IsolatedAsyncioTestCase):
         Args:
             coro: A zero-argument async callable (the test implementation).
         """
+        # Guard: never open windows while iTerm2 is the frontmost app (or when
+        # the frontmost app can't be determined). This skips BEFORE any
+        # connection or window creation. Override with ITERM_MCP_TEST_ALLOW_ACTIVE=1.
+        reason = skip_reason_if_iterm_active()
+        if reason:
+            self.skipTest(reason)
+
         async def _wrapper() -> None:
             await self.async_setup()
             try:
