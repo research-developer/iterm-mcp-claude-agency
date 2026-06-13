@@ -39,8 +39,6 @@ dev = [
 
 [project.scripts]
 iterm-mcp = "iterm_mcpy.main:main"
-iterm-mcp-server = "iterm_mcpy.mcp_server:main"
-iterm-mcp-fastmcp = "iterm_mcpy.fastmcp_server:main"
 
 [tool.setuptools]
 package-dir = {"" = "."}
