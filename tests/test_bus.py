@@ -391,6 +391,36 @@ class TestBusTtlExpiry(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("stale", bodies)
         self.assertIn("fresh", bodies)
 
+    async def test_ttl_positive_not_dropped(self):
+        """Messages with a positive TTL (e.g. 3600 s) must NOT be filtered out."""
+        # Send a message that won't expire for an hour.
+        await self.bus.send(
+            sender="s", recipient="agent:alice",
+            kind="instruction", body="long-lived",
+            ttl_seconds=3600,
+        )
+        # Send a message with no TTL (never expires).
+        await self.bus.send(
+            sender="s", recipient="agent:alice",
+            kind="instruction", body="no-ttl",
+        )
+        result = await self.bus.receive("agent:alice", wait_up_to=0)
+        bodies = [m["body"] for m in result["messages"]]
+        self.assertIn("long-lived", bodies, "positive-TTL message should still be returned")
+        self.assertIn("no-ttl", bodies)
+
+    async def test_ttl_list_inboxes_positive_not_dropped(self):
+        """list_inboxes must also count positive-TTL messages as live."""
+        await self.bus.send(
+            sender="s", recipient="agent:alice",
+            kind="instruction", body="live-msg",
+            ttl_seconds=3600,
+        )
+        inboxes = await self.bus.list_inboxes()
+        by_r = {i["recipient"]: i for i in inboxes}
+        self.assertIn("agent:alice", by_r, "inbox should be visible with positive-TTL msg")
+        self.assertEqual(by_r["agent:alice"]["depth"], 1)
+
 
 class TestBusListInboxes(unittest.IsolatedAsyncioTestCase):
     """list_inboxes returns depth and age info per recipient."""
@@ -745,6 +775,79 @@ class TestBusToolFriendlyVerbAliases(unittest.IsolatedAsyncioTestCase):
         ctx = _make_ctx(self.bus)
         result = await bus_tool(ctx, op="notify", to="agent:alice", body="notif")
         self.assertTrue(result["ok"], result)
+
+    async def test_receive_alias(self):
+        """'receive' must actually receive messages (not error)."""
+        from iterm_mcpy.tools.bus import bus as bus_tool
+
+        ctx = _make_ctx(self.bus)
+        # Seed a message first.
+        await bus_tool(ctx, op="send", to="agent:alice", body="via-receive-alias")
+
+        result = await bus_tool(ctx, op="receive", agent="alice", wait_up_to=0)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["method"], "GET")
+        self.assertEqual(len(result["data"]["messages"]), 1)
+        self.assertEqual(result["data"]["messages"][0]["body"], "via-receive-alias")
+
+    async def test_drain_alias(self):
+        """'drain' is equivalent to 'receive' (non-blocking drain)."""
+        from iterm_mcpy.tools.bus import bus as bus_tool
+
+        ctx = _make_ctx(self.bus)
+        await bus_tool(ctx, op="send", to="agent:alice", body="via-drain-alias")
+
+        result = await bus_tool(ctx, op="drain", agent="alice", wait_up_to=0)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(len(result["data"]["messages"]), 1)
+
+    async def test_ack_alias(self):
+        """'ack' must actually advance the cursor."""
+        from iterm_mcpy.tools.bus import bus as bus_tool
+
+        ctx = _make_ctx(self.bus)
+        await bus_tool(ctx, op="send", to="agent:alice", body="m-for-ack-alias")
+
+        recv = await bus_tool(ctx, op="receive", agent="alice", wait_up_to=0)
+        cursor = recv["data"]["next_cursor"]
+
+        ack_result = await bus_tool(
+            ctx, op="ack", agent="alice", up_to_cursor=cursor
+        )
+        self.assertTrue(ack_result["ok"], ack_result)
+        self.assertEqual(ack_result["data"]["acked_through"], cursor)
+
+        # Inbox should now be empty.
+        recv2 = await bus_tool(ctx, op="receive", agent="alice", wait_up_to=0)
+        self.assertEqual(recv2["data"]["messages"], [])
+
+    async def test_acknowledge_alias(self):
+        """'acknowledge' is equivalent to 'ack'."""
+        from iterm_mcpy.tools.bus import bus as bus_tool
+
+        ctx = _make_ctx(self.bus)
+        await bus_tool(ctx, op="send", to="agent:alice", body="m-for-acknowledge")
+
+        recv = await bus_tool(ctx, op="receive", agent="alice", wait_up_to=0)
+        cursor = recv["data"]["next_cursor"]
+
+        ack_result = await bus_tool(
+            ctx, op="acknowledge", agent="alice", up_to_cursor=cursor
+        )
+        self.assertTrue(ack_result["ok"], ack_result)
+
+    async def test_peek_alias(self):
+        """'peek' must return messages non-blockingly (maps to GET target=peek)."""
+        from iterm_mcpy.tools.bus import bus as bus_tool
+
+        ctx = _make_ctx(self.bus)
+        for i in range(3):
+            await bus_tool(ctx, op="send", to="agent:alice", body=f"peek-{i}")
+
+        result = await bus_tool(ctx, op="peek", agent="alice")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["method"], "GET")
+        self.assertEqual(len(result["data"]["messages"]), 3)
 
 
 # ---------------------------------------------------------------------------

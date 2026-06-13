@@ -153,6 +153,32 @@ async def bus(
         return ok_envelope(method="OPTIONS", data=_OPTIONS_SCHEMA)
 
     # ------------------------------------------------------------------
+    # Local friendly-alias normalisation (bus-specific; does NOT touch the
+    # global VERB_ATLAS).  These are the aliases advertised in _OPTIONS_SCHEMA
+    # that resolve_op does not know about, so we intercept them here before
+    # handing off to the shared resolver.
+    #
+    #   receive / drain  → treat as GET (the receive path)
+    #   ack / acknowledge → treat as POST + definer=TRIGGER (the ack path)
+    #   peek             → treat as GET with target="peek"
+    # ------------------------------------------------------------------
+    _RECEIVE_ALIASES = {"receive", "drain"}
+    _ACK_ALIASES = {"ack", "acknowledge"}
+    _PEEK_ALIASES = {"peek"}
+
+    op_lower = op.lower() if op else "get"
+    if op_lower in _RECEIVE_ALIASES:
+        op = "GET"
+        definer = None
+    elif op_lower in _ACK_ALIASES:
+        op = "POST"
+        definer = "TRIGGER"
+    elif op_lower in _PEEK_ALIASES:
+        op = "GET"
+        definer = None
+        target = "peek"
+
+    # ------------------------------------------------------------------
     # Resolve op.
     # ------------------------------------------------------------------
     try:

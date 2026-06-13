@@ -285,7 +285,11 @@ class AgentMessageBus:
         # TTL filter: include rows where ttl_seconds IS NULL, or where the
         # message is not yet expired.  Expiry = created_at + ttl_seconds.
         # We compute expiry in Python-free SQL using datetime arithmetic:
-        # datetime(created_at, '+N seconds') > datetime('now').
+        # datetime(created_at, '+N seconds') > datetime(?).
+        # Both sides must be wrapped in datetime() so SQLite compares
+        # normalised "YYYY-MM-DD HH:MM:SS" strings rather than doing a raw
+        # lexical compare against the ISO-8601 string (which may include a
+        # timezone offset that confuses ordering).
         params.append(now_iso)
 
         rows = self._conn.execute(
@@ -298,7 +302,7 @@ class AgentMessageBus:
               {kind_clause}
               AND (
                   ttl_seconds IS NULL
-                  OR datetime(created_at, '+' || ttl_seconds || ' seconds') > ?
+                  OR datetime(created_at, '+' || ttl_seconds || ' seconds') > datetime(?)
               )
             ORDER BY rowid ASC
             LIMIT ?
@@ -483,6 +487,13 @@ class AgentMessageBus:
 
         Returns:
             ``{acked_through: int}``.
+
+        Note — Phase 1 unbounded growth:
+            Acknowledged and TTL-expired rows are **never deleted** from
+            ``bus_messages`` in Phase 1.  The table will grow indefinitely
+            under heavy traffic.  A future ``purge(before_rowid)`` /
+            TTL-sweep utility should be added (Phase 2) to reclaim space
+            and keep query performance stable.
         """
         async with self._lock:
             current = self._get_cursor(recipient)
@@ -520,7 +531,7 @@ class AgentMessageBus:
                   AND (
                       m.ttl_seconds IS NULL
                       OR datetime(m.created_at,
-                             '+' || m.ttl_seconds || ' seconds') > ?
+                             '+' || m.ttl_seconds || ' seconds') > datetime(?)
                   )
                 GROUP BY m.recipient
                 ORDER BY m.recipient

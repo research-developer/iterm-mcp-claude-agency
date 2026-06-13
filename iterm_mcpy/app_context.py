@@ -68,6 +68,9 @@ class NotificationManager:
         # Wired by _build_app_context() after both objects are constructed.
         # When set, add() also enqueues into the bus (non-destructively).
         self._message_bus: Optional[Any] = None
+        # Retained set of in-flight bus tasks.  Holds a strong reference so
+        # the garbage collector cannot cancel tasks before they complete.
+        self._bus_tasks: set = set()
 
     async def add(self, notification: AgentNotification) -> None:
         """Add a notification, maintaining ring buffer limits.
@@ -93,25 +96,49 @@ class NotificationManager:
         # Bus adapter — additive, does not alter existing behavior.
         if self._message_bus is not None:
             try:
-                body = {
-                    "level": notification.level,
-                    "summary": notification.summary,
-                    "context": notification.context,
-                    "action_hint": notification.action_hint,
-                    "timestamp": notification.timestamp.isoformat(),
-                }
-                asyncio.create_task(
-                    self._message_bus.send(
-                        sender="system",
-                        recipient=f"agent:{notification.agent}",
-                        kind="notification",
-                        body=body,
+                # Only schedule when an event loop is already running.
+                # If there is no running loop (e.g. during tests or sync
+                # startup), skip scheduling entirely — creating a coroutine
+                # object without scheduling it produces a RuntimeWarning and
+                # the coroutine would never execute.
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass  # No running loop — skip the bus write silently.
+            else:
+                try:
+                    body = {
+                        "level": notification.level,
+                        "summary": notification.summary,
+                        "context": notification.context,
+                        "action_hint": notification.action_hint,
+                        "timestamp": notification.timestamp.isoformat(),
+                    }
+                    task = asyncio.create_task(
+                        self._message_bus.send(
+                            sender="system",
+                            recipient=f"agent:{notification.agent}",
+                            kind="notification",
+                            body=body,
+                        )
                     )
-                )
-            except Exception:
-                logger.exception(
-                    "NotificationManager: failed to enqueue bus notification"
-                )
+                    # Retain the task so GC cannot collect it before it runs.
+                    self._bus_tasks.add(task)
+
+                    def _bus_task_done(t: asyncio.Task) -> None:
+                        self._bus_tasks.discard(t)
+                        exc = t.exception() if not t.cancelled() else None
+                        if exc is not None:
+                            logger.warning(
+                                "NotificationManager: bus send task failed: %s",
+                                exc,
+                                exc_info=exc,
+                            )
+
+                    task.add_done_callback(_bus_task_done)
+                except Exception:
+                    logger.exception(
+                        "NotificationManager: failed to enqueue bus notification"
+                    )
 
     async def add_simple(
         self,
