@@ -13,6 +13,7 @@ import iterm2
 
 from core.terminal import ItermTerminal
 from core.session import ItermSession
+from tests.live_iterm_base import LiveItermTestCase
 
 
 class TestSuspendStateManagement(unittest.TestCase):
@@ -199,7 +200,7 @@ class TestSuspendResumeAsync(unittest.TestCase):
         self.run_async(test_impl())
 
 
-class TestSuspendResumeIntegration(unittest.TestCase):
+class TestSuspendResumeIntegration(LiveItermTestCase):
     """Integration tests for suspend/resume with real iTerm2 connection.
 
     These tests require iTerm2 to be running.
@@ -207,23 +208,14 @@ class TestSuspendResumeIntegration(unittest.TestCase):
 
     async def async_setup(self):
         """Set up the test environment."""
-        try:
-            self.connection = await iterm2.Connection.async_create()
-            self.terminal = ItermTerminal(self.connection)
-            await self.terminal.initialize()
+        await super().async_setup()
 
-            # Create a test window
-            self.test_session = await self.terminal.create_window()
-            if self.test_session:
-                await self.test_session.set_name("SuspendTestSession")
-                await asyncio.sleep(1)
-            else:
-                self.fail("Failed to create test window")
-        except Exception as e:
-            self.fail(f"Failed to set up test environment: {str(e)}")
+        # Create a tagged test window (auto-closed by run_async_test teardown).
+        self.test_session = await self.create_tagged_window(name="SuspendTestSession")
+        await asyncio.sleep(1)
 
     async def async_teardown(self):
-        """Clean up the test environment."""
+        """Resume the session if suspended before base class closes it."""
         if hasattr(self, "test_session"):
             # Make sure to resume if suspended before closing
             if self.test_session.is_suspended:
@@ -231,24 +223,7 @@ class TestSuspendResumeIntegration(unittest.TestCase):
                     await self.test_session.resume()
                 except Exception:
                     pass
-            await self.terminal.close_session(self.test_session.id)
-
-    def run_async_test(self, coro):
-        """Run an async test function."""
-        async def test_wrapper():
-            try:
-                await self.async_setup()
-                await coro()
-            finally:
-                await self.async_teardown()
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(test_wrapper())
-        finally:
-            loop.close()
-            asyncio.set_event_loop(None)
+        await super().async_teardown()
 
     def test_suspend_running_process(self):
         """Test suspending a running process with Ctrl+Z."""
