@@ -62,7 +62,12 @@ iterm-mcp/
 │   └── models.py                 # Pydantic request/response models
 ├── iterm_mcpy/                   # Server implementations
 │   ├── __init__.py
-│   ├── fastmcp_server.py         # FastMCP implementation
+│   ├── __main__.py               # python -m iterm_mcpy entry
+│   ├── main.py                   # iterm-mcp CLI (shim default; daemon/stdio/status/stop/install)
+│   ├── app_context.py            # Process-level state singleton (AppContext)
+│   ├── daemon.py                 # Singleton streamable-HTTP daemon
+│   ├── shim.py                   # stdio<->HTTP shim (what clients spawn)
+│   ├── fastmcp_server.py         # FastMCP server wiring (mcp instance, resources, prompts)
 │   └── tools/                    # MCP tool modules
 ├── utils/                        # Utility functions
 │   ├── __init__.py
@@ -479,7 +484,7 @@ list_agents(team="frontend")  # Returns alice and bob
 
 ### Playbook Orchestration
 
-FastMCP now exposes an `orchestrate_playbook` tool (and matching `OrchestratePlaybook` gRPC method) so you can define multi-team workflows once and execute them with a single request:
+The `orchestrate` tool lets you define multi-team workflows once and execute them with a single request:
 
 1. **Create a layout** with `CreateSessionsRequest` (pane names, optional agent/team assignment, initial commands).
 2. **Run command blocks** defined as `PlaybookCommand` entries (parallel flags + `SessionMessage` targets).
