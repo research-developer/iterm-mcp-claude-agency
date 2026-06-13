@@ -9,7 +9,6 @@ A Python implementation for controlling iTerm2 terminal sessions with support fo
 
 ## Status
 
-✅ **gRPC Migration Complete** - Full gRPC server/client implementation with 17 RPC methods  
 ✅ **Multi-Pane Orchestration** - Parallel session operations with agent/team targeting  
 ✅ **Agent Registry** - Complete agent and team management with cascading messages  
 ✅ **Test Coverage** - 98 passing tests with 27.77% code coverage  
@@ -63,12 +62,8 @@ iterm-mcp/
 │   └── models.py                 # Pydantic request/response models
 ├── iterm_mcpy/                   # Server implementations
 │   ├── __init__.py
-│   ├── fastmcp_server.py         # FastMCP implementation (recommended)
-│   ├── grpc_server.py            # gRPC server implementation
-│   ├── grpc_client.py            # gRPC client for programmatic access
-│   └── iterm_mcp_pb2*.py         # Generated protobuf code
-├── protos/                       # Protocol buffer definitions
-│   └── iterm_mcp.proto
+│   ├── fastmcp_server.py         # FastMCP implementation
+│   └── tools/                    # MCP tool modules
 ├── utils/                        # Utility functions
 │   ├── __init__.py
 │   └── logging.py                # Logging utilities
@@ -86,58 +81,26 @@ iterm-mcp/
    ```bash
    ./scripts/watch_tests.sh
    ```
-4. Generate gRPC code (if modifying protos):
-   ```bash
-   python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. protos/iterm_mcp.proto
-   ```
 
 ## Usage
 ### MCP Integration with the Official Python SDK
 
-We provide two server implementations:
-1. **FastMCP Implementation** (recommended) - Uses the official MCP Python SDK
-2. **Legacy Implementation** - Custom MCP server implementation (for backward compatibility)
-
 ### Running the MCP Server
 
 ```bash
-# Run the FastMCP server (recommended)
-python -m iterm_mcp_python.server.main
-
-# Run the legacy MCP server
-python -m iterm_mcp_python.server.main --legacy
-
-# Run the demo (not MCP server)
-python -m iterm_mcp_python.server.main --demo
+# Run the MCP server
+python -m iterm_mcpy.main
 
 # Enable debug logging
-python -m iterm_mcp_python.server.main --debug
+python -m iterm_mcpy.main --debug
 ```
 
 ### Installing the MCP Server for Claude Desktop
 
-We provide a script to install the server in Claude Desktop:
+Use the built-in install command:
 
 ```bash
-# Run the installation script
-python install_claude_desktop.py
-```
-
-This will:
-1. Register the server in Claude Desktop's configuration
-2. Check if the server is already running
-3. Offer to start the server if it's not running
-
-**IMPORTANT**: You must have the server running in a separate terminal window while using it with Claude Desktop. The server won't start automatically when Claude Desktop launches.
-
-To start the server manually:
-```bash
-python -m iterm_mcp_python.server.main
-```
-
-If you encounter connection errors in Claude Desktop, you can diagnose them with:
-```bash
-python install_claude_desktop.py --check-error "your error message"
+iterm-mcp install
 ```
 
 ### Debugging with MCP Inspector
@@ -657,41 +620,6 @@ result = registry.resolve_cascade_targets(broadcast_cascade)
 - Agent-specific messages resolve to only that agent
 - Broadcasts reach all registered agents
 
-### gRPC Client
-
-For programmatic access outside MCP, use the gRPC client:
-
-```python
-from iterm_mcpy.grpc_client import ITermClient
-
-# Using context manager
-with ITermClient(host='localhost', port=50051) as client:
-    # List sessions
-    sessions = client.list_sessions()
-
-    # Create sessions with layout
-    response = client.create_sessions(
-        sessions=[
-            {"name": "Agent1", "agent": "alice", "team": "frontend"},
-            {"name": "Agent2", "agent": "bob", "team": "backend"}
-        ],
-        layout="HORIZONTAL_SPLIT"
-    )
-
-    # Write to multiple sessions
-    client.write_to_sessions(
-        messages=[{"content": "echo hello", "targets": [{"team": "frontend"}]}],
-        parallel=True
-    )
-
-    # Send cascade message
-    client.send_cascade_message(
-        broadcast="Status check",
-        teams={"frontend": "Run tests"},
-        agents={"alice": "Review PR #42"}
-    )
-```
-
 ### Session Locking
 
 Agents can lock sessions for exclusive access, preventing other agents from writing:
@@ -733,10 +661,9 @@ Agents and teams are persisted to JSONL files in `~/.iterm_mcp_logs/`:
 
 ## Testing
 
-The project includes a comprehensive test suite with 98+ passing tests covering:
+The project includes a comprehensive test suite covering:
 - Core session and terminal management
 - Agent and team orchestration
-- gRPC server and client functionality
 - Command output tracking
 - Model validation
 - Logging infrastructure
@@ -765,8 +692,6 @@ python -m pytest tests/test_agent_registry.py -v
 - `test_models.py` - Pydantic model validation
 - `test_agent_registry.py` - Agent/team management
 - `test_command_output_tracking.py` - Command tracking logic
-- `test_grpc_smoke.py` - gRPC service smoke tests
-- `test_grpc_client.py` - gRPC client tests
 
 **Integration Tests** (require macOS + iTerm2):
 - `test_basic_functionality.py` - Core session operations

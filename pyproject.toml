@@ -16,8 +16,6 @@ dependencies = [
     "pyzmq>=25.0.0",
     "pyyaml>=6.0",
     "mcp>=1.3.0",
-    "grpcio>=1.76.0",
-    "protobuf>=6.31.1",
 ]
 
 [project.optional-dependencies]
@@ -34,7 +32,6 @@ dev = [
     "black>=23.0.0",
     "mypy>=1.0.0",
     "isort>=5.0.0",
-    "grpcio-tools>=1.76.0",
 ]
 
 [project.scripts]
@@ -75,8 +72,6 @@ source = ["core", "iterm_mcpy", "utils"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
-    "iterm_mcpy/iterm_mcp_pb2.py",
-    "iterm_mcpy/iterm_mcp_pb2_grpc.py",
 ]
 
 [tool.coverage.report]
