@@ -51,6 +51,19 @@ A single iTerm2 session variable, **`user.mcp_project`**, holds the project (the
 - A tool/command that: (1) asks the current agent to emit a structured **context summary**, (2) launches a **fresh** agent *in* repo B seeded with that summary (a new conversation — lossy by necessity, since the original can't be moved), (3) parks or closes the old agent per the caller's choice.
 - Clearly an explicit action, never automatic. The git-worktree case (repo B is a worktree of the agent's repo → `--resume` does cross it) is the one narrow exception where a near-lossless move is possible; note it but don't special-case it in v1.
 
+## Future direction (design-for now, build later): hierarchical managing agents
+
+A later phase layers **managing agents** on top of project segmentation: a **per-project manager** ("project manager") that receives summaries of recent activity in its project, and a **global manager** ("product manager") that aggregates across project managers. The repo already has the scaffolding — `ManagerRegistry` (hierarchical managers/workers, parent/child) and the message bus (`agent:`/`team:`/`broadcast` addressing) — so `project` should *compose* with them, not duplicate them.
+
+v1 future-proofs cheaply (no manager logic yet) by:
+
+1. **Project as a manager scope.** A project's sessions are the natural workers of a per-project manager; the project id is the manager's scope key, and per-project managers become children of one global manager in `ManagerRegistry`. Keep the project grouping addressable so a manager can attach later.
+2. **Stamp `project` on the activity streams.** Wherever activity is already recorded — captured `⏺` actions (`core/response_capture` → `/api/db/responses`), agent notifications, and message-bus envelopes — include the originating session's `user.mcp_project`. This makes per-project history queryable later at near-zero cost now.
+3. **`project:` as an addressable scope.** Add `project:<id>` as a bus address / targeting selector (beside `agent:`/`team:`/`broadcast`) so a per-project manager can subscribe to exactly its project's events and the global manager can fan in across projects.
+4. **A `project_summary(project_id)` interface seam.** Define (not necessarily implement) the function shape that digests recent per-project activity (actions + notifications + bus messages, filtered by the `project` stamp) into a summary the per-project manager consumes — and which the global manager consumes per-project, up the hierarchy.
+
+Net: v1 ships segmentation + the `project` stamp on events + `project:` addressing; the manager hierarchy and summary digests slot on top without touching the segmentation core.
+
 ## Data flow
 
 ```
