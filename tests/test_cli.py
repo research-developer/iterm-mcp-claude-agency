@@ -5,6 +5,9 @@ from unittest import mock
 
 class TestCliRouting(unittest.TestCase):
     def _run(self, argv):
+        # Patches must target the source module (e.g. iterm_mcpy.shim.run_shim),
+        # NOT iterm_mcpy.main.<name>: main.py defers all heavy imports into the
+        # subcommand branches, so names resolve at call time in their home modules.
         from iterm_mcpy import main as cli
         with mock.patch("sys.argv", ["iterm-mcp"] + argv):
             cli.main()
@@ -47,6 +50,13 @@ class TestCliRouting(unittest.TestCase):
             self._run(["stop"])
         term.assert_called_once_with(4242)
         clear.assert_called_once()
+
+    def test_install_code_prints_claude_mcp_add(self):
+        with mock.patch("builtins.print") as fake_print:
+            self._run(["install", "--code"])
+        printed = " ".join(str(c) for c in fake_print.call_args_list)
+        self.assertIn("claude mcp add", printed)
+        self.assertIn("-m iterm_mcpy", printed)
 
 
 if __name__ == "__main__":

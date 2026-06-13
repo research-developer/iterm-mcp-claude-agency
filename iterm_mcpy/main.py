@@ -68,7 +68,8 @@ def _stop() -> None:
         return
     terminate_daemon(state["pid"])
     clear_state()
-    print(f"sent SIGTERM to daemon pid {state['pid']}")
+    print(f"stopped daemon pid {state['pid']} (state cleared; "
+          f"SIGTERM delivered if the process was still alive)")
 
 
 def _install(desktop: bool, code: bool) -> None:
@@ -78,7 +79,11 @@ def _install(desktop: bool, code: bool) -> None:
     if desktop:
         cfg_path = Path("~/Library/Application Support/Claude/"
                         "claude_desktop_config.json").expanduser()
-        cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        try:
+            cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        except json.JSONDecodeError as exc:
+            sys.exit(f"error: {cfg_path} contains invalid JSON — fix it manually "
+                     f"before re-running install.\n  ({exc})")
         cfg.setdefault("mcpServers", {})["iterm"] = {
             "command": sys.executable,
             "args": ["-m", "iterm_mcpy"],
