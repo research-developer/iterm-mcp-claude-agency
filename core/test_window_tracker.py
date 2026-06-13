@@ -51,7 +51,8 @@ import iterm2
 
 log = logging.getLogger("iterm-mcp.test-tracker")
 
-# Stable prefix that identifies any test-opened session by profile name.
+# Stable prefix; orphan sweep matches profile names starting with "MCP-TEST"
+# (covering the stable MCP-TEST profile and any MCP-TEST·<run> variants).
 # Production profiles start with "MCP Agent" or "MCP Team:" — never this prefix.
 TAG_PREFIX = "MCP-TEST·"  # middle-dot U+00B7
 

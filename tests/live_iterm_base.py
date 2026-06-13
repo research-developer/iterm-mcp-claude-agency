@@ -71,7 +71,6 @@ import iterm2
 from core.terminal import ItermTerminal
 from core.session import ItermSession
 from core.test_window_tracker import (
-    TAG_PREFIX,
     TEST_PROFILE_NAME,
     close_tagged_sessions,
     ensure_test_profile,
