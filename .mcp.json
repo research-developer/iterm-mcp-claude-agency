@@ -2,7 +2,7 @@
   "mcpServers": {
     "iTerm": {
       "command": "python",
-      "args": ["-m", "iterm_mcpy.fastmcp_server"],
+      "args": ["-m", "iterm_mcpy"],
       "env": {}
     }
   }

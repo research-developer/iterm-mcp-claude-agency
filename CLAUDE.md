@@ -49,6 +49,11 @@
    - Added more detailed error messages in assertions
    - Implemented proper cleanup in test teardowns
 
+5. ✅ **Per-client state duplication**:
+   - Fixed by introducing `AppContext` singleton (`iterm_mcpy/app_context.py`) that holds all process-level state (terminal, layout manager, agent registry, etc.)
+   - A shared singleton HTTP daemon (`iterm_mcpy/daemon.py`) is auto-spawned on first client connect; all clients share one iTerm2 connection and one agent/team registry
+   - Previously, the FastMCP lifespan ran once per client session which meant each client got its own state — AppContext decouples state from the lifespan
+
 ### Remaining Improvements Needed
 
 1. **CRITICAL: WebSocket Close Frame Issues**:
@@ -77,8 +82,8 @@
 
 ## Build & Test Commands
 - Run tests: `python -m unittest discover tests` (run all Python unittest tests)
-- Run server: `python -m iterm_mcpy.main` (run the FastMCP server implementation)
-- Run demo mode: `python -m iterm_mcpy.main --demo` (run the demo controller)
+  - Note: full discovery hangs on 7 live-iTerm2 integration modules when no interactive iTerm2 API session is available — use `python scripts/test_baseline.py --timeout 60` for a per-module run with timeouts
+- Run server: `iterm-mcp` or `python -m iterm_mcpy` (stdio shim; auto-starts the shared daemon)
 
 ## Code Style Guidelines
 - **Imports**: Group imports by: standard library, external packages, local modules
@@ -132,6 +137,10 @@ iterm-mcp/
 │   ├── models.py                 # Pydantic request/response models
 │   └── ... (26+ modules)
 ├── iterm_mcpy/                   # MCP server package
+│   ├── __main__.py               # Entry point: `python -m iterm_mcpy` runs the shim
+│   ├── app_context.py            # Process-level state singleton (AppContext)
+│   ├── daemon.py                 # Singleton streamable-HTTP daemon (ports 12340-12349, /health)
+│   ├── shim.py                   # stdio<->HTTP shim (what clients spawn); auto-starts daemon
 │   ├── fastmcp_server.py         # Slim server: lifespan, resources, prompts, register_all()
 │   ├── helpers.py                # Shared helpers (resolve_session, execute_*)
 │   ├── dispatcher.py             # MethodDispatcher base (WebSpec method semantics)
@@ -163,7 +172,6 @@ iterm-mcp/
 │   └── superpowers/plans/        # Implementation plans
 ├── scripts/                      # Helper scripts (it2api samples, watchers)
 ├── examples/
-├── protos/                       # gRPC proto sources
 ├── static/
 └── utils/                        # Utility functions
     └── logging.py                # Logging and monitoring utilities
@@ -309,34 +317,32 @@ schema.
 - Session reconnection after interruptions
 
 ### Running the Server
-```bash
-# Install dependencies
-pip install -e .
 
-# Launch server
-python -m iterm_mcpy.main
+Both Claude Code and Claude Desktop spawn the stdio shim (`iterm-mcp` / `python -m iterm_mcpy`). The shim discovers or auto-starts a shared singleton daemon over streamable HTTP on `127.0.0.1:12340-12349`; all clients share one iTerm2 connection and one agent/team registry (cross-client agent visibility). The daemon auto-starts on first client connect; its state is advertised in `~/.iterm-mcp/daemon.json`. The `/health` endpoint serves a version handshake and shims will restart version-stale daemons automatically.
+
+```bash
+iterm-mcp                # stdio shim (what Claude Code/Desktop spawn); auto-starts the shared daemon
+iterm-mcp daemon         # run the singleton HTTP daemon in the foreground
+iterm-mcp stdio          # single-process stdio server (debugging; no daemon)
+iterm-mcp status|stop    # inspect / stop the shared daemon
+iterm-mcp install        # write Claude Desktop config + print Claude Code add command
 ```
 
 ### Claude Desktop Integration
-```bash
-# Install the server in Claude Desktop 
-python install_claude_desktop.py
 
-# Make sure to manually start the server before using Claude Desktop
-python -m iterm_mcpy.main
-```
+Run `iterm-mcp install --desktop` then restart Claude Desktop. Note: `run_server.py` is a deprecated wrapper kept only for pre-migration configs — it now routes through the shim.
 
 ### Development Commands
 ```bash
 # Install development dependencies
 pip install -e ".[dev]"
 
-# Run the server in development mode
-python -m iterm_mcpy.main --debug
+# Run the server in debug mode (single-process stdio, no daemon)
+iterm-mcp stdio
 
 # MCP Protocol debugging
 pip install modelcontextprotocol-inspector
-python -m modelcontextprotocol_inspector iterm_mcpy.main
+python -m modelcontextprotocol_inspector iterm_mcpy/fastmcp_server.py
 ```
 
 ## Recent Changes (March 2025)

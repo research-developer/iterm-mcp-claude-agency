@@ -1,366 +1,32 @@
-"""MCP server implementation for iTerm2 controller using the official MCP Python SDK.
+"""FastMCP server wiring: the mcp instance, lifespan, resources, prompts, and OAuth stub routes.
 
-This version supports parallel multi-session operations with agent/team management.
+All long-lived state (iTerm2 connection, registries) lives in iterm_mcpy/app_context.py;
+the lifespan only hands each client session a reference to that process singleton.
 """
 
-import asyncio
 import json
-import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import AsyncIterator, Dict, List, Optional, Any
+from typing import AsyncIterator
 
-import iterm2
 from mcp.server.fastmcp import FastMCP
 
-from core.layouts import LayoutManager
-from core.terminal import ItermTerminal
-from core.agents import AgentRegistry
-from utils.telemetry import TelemetryEmitter
-from utils.otel import init_tracing, shutdown_tracing
-from core.tags import SessionTagLockManager, FocusCooldownManager
-from core.profiles import ProfileManager, get_profile_manager
-from core.feedback import (
-    FeedbackHookManager,
-    FeedbackRegistry,
-    FeedbackForker,
-    GitHubIntegration,
+from iterm_mcpy.app_context import (
+    AppContext,
+    NotificationManager,  # re-export: callers historically import it from here
+    get_app_context,
 )
-from core.services import (
-    ServiceManager,
-    get_service_manager,
-)
-from core.service_hooks import (
-    ServiceHookManager,
-    get_service_hook_manager,
-)
-from core.memory import SQLiteMemoryStore
-from core.models import AgentNotification
-from core.manager import ManagerRegistry
-from core.flows import (
-    EventBus,
-    FlowManager,
-    get_event_bus,
-    get_flow_manager,
-)
-from core.roles import RoleManager
-
-# Global references for resources (set during lifespan)
-_terminal: Optional[ItermTerminal] = None
-_logger: Optional[logging.Logger] = None
-_agent_registry: Optional[AgentRegistry] = None
-_telemetry: Optional[TelemetryEmitter] = None
-_telemetry_server_task: Optional[asyncio.Task] = None
-_notification_manager: Optional["NotificationManager"] = None
-_tag_lock_manager: Optional[SessionTagLockManager] = None
-_focus_cooldown: Optional[FocusCooldownManager] = None
-_feedback_registry: Optional[FeedbackRegistry] = None
-_feedback_hook_manager: Optional[FeedbackHookManager] = None
-_feedback_forker: Optional[FeedbackForker] = None
-_github_integration: Optional[GitHubIntegration] = None
-_profile_manager: Optional[ProfileManager] = None
-_service_manager: Optional[ServiceManager] = None
-_service_hook_manager: Optional[ServiceHookManager] = None
-_manager_registry: Optional[ManagerRegistry] = None
-_event_bus: Optional[EventBus] = None
-_flow_manager: Optional[FlowManager] = None
-_role_manager: Optional[RoleManager] = None
-_memory_store: Optional[SQLiteMemoryStore] = None
-
-
-# ============================================================================
-# NOTIFICATION MANAGER
-# ============================================================================
-
-class NotificationManager:
-    """Manages agent notifications with ring buffer storage."""
-
-    # Status icons for compact display
-    STATUS_ICONS = {
-        "info": "ℹ",
-        "warning": "⚠",
-        "error": "✗",
-        "success": "✓",
-        "blocked": "⏸",
-    }
-
-    def __init__(self, max_per_agent: int = 50, max_total: int = 200):
-        self._notifications: List[AgentNotification] = []
-        self._max_per_agent = max_per_agent
-        self._max_total = max_total
-        self._lock = asyncio.Lock()
-
-    async def add(self, notification: AgentNotification) -> None:
-        """Add a notification, maintaining ring buffer limits."""
-        async with self._lock:
-            self._notifications.append(notification)
-            # Trim to max total
-            if len(self._notifications) > self._max_total:
-                self._notifications = self._notifications[-self._max_total:]
-
-    async def add_simple(
-        self,
-        agent: str,
-        level: str,
-        summary: str,
-        context: Optional[str] = None,
-        action_hint: Optional[str] = None,
-    ) -> None:
-        """Convenience method to add a notification."""
-        notification = AgentNotification(
-            agent=agent,
-            timestamp=datetime.now(),
-            level=level,  # type: ignore
-            summary=summary[:100],
-            context=context,
-            action_hint=action_hint,
-        )
-        await self.add(notification)
-
-    async def get(
-        self,
-        limit: int = 10,
-        level: Optional[str] = None,
-        agent: Optional[str] = None,
-        since: Optional[datetime] = None,
-    ) -> List[AgentNotification]:
-        """Get notifications with optional filters."""
-        async with self._lock:
-            result = self._notifications.copy()
-
-        # Apply filters
-        if level:
-            result = [n for n in result if n.level == level]
-        if agent:
-            result = [n for n in result if n.agent == agent]
-        if since:
-            result = [n for n in result if n.timestamp >= since]
-
-        # Return most recent first, limited
-        return sorted(result, key=lambda n: n.timestamp, reverse=True)[:limit]
-
-    async def get_latest_per_agent(self) -> Dict[str, AgentNotification]:
-        """Get the most recent notification for each agent."""
-        async with self._lock:
-            latest: Dict[str, AgentNotification] = {}
-            for n in reversed(self._notifications):
-                if n.agent not in latest:
-                    latest[n.agent] = n
-            return latest
-
-    def format_compact(self, notifications: List[AgentNotification]) -> str:
-        """Format notifications for compact TUI display."""
-        if not notifications:
-            return "━━━ No notifications ━━━"
-
-        lines = ["━━━ Agent Status ━━━"]
-        for n in notifications:
-            icon = self.STATUS_ICONS.get(n.level, "?")
-            lines.append(f"{n.agent:<12} {icon} {n.summary}")
-        lines.append("━━━━━━━━━━━━━━━━━━━━")
-        return "\n".join(lines)
 
 
 @asynccontextmanager
-async def iterm_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
-    """Manage the lifecycle of iTerm2 connections and resources.
+async def iterm_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
+    """Hand each client session a reference to the shared AppContext.
 
-    Args:
-        server: The FastMCP server instance
-
-    Yields:
-        A dictionary containing initialized resources
+    The mcp SDK enters this once per client session. It must stay cheap and
+    must NOT tear anything down on exit — other clients are still connected.
     """
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(os.path.expanduser("~/.iterm-mcp.log")),
-            logging.StreamHandler()
-        ]
-    )
-    logger = logging.getLogger("iterm-mcp-server")
-    logger.info("Initializing iTerm2 connection...")
-
-    # Initialize OpenTelemetry tracing
-    tracing_enabled = init_tracing()
-    if tracing_enabled:
-        logger.info("OpenTelemetry tracing initialized successfully")
-    else:
-        logger.info("OpenTelemetry tracing not available (install with: pip install iterm-mcp[otel])")
-
-    connection = None
-    terminal = None
-    layout_manager = None
-    agent_registry = None
-    event_bus = None
-    flow_manager = None
-
-    try:
-        # Initialize iTerm2 connection
-        try:
-            connection = await iterm2.Connection.async_create()
-            logger.info("iTerm2 connection established successfully")
-        except Exception as conn_error:
-            logger.error(f"Failed to establish iTerm2 connection: {str(conn_error)}")
-            raise
-
-        # Initialize terminal controller
-        logger.info("Initializing iTerm terminal controller...")
-        log_dir = os.path.expanduser("~/.iterm_mcp_logs")
-        terminal = ItermTerminal(
-            connection=connection,
-            log_dir=log_dir,
-            enable_logging=True,
-            default_max_lines=100,
-            max_snapshot_lines=1000
-        )
-
-        try:
-            await terminal.initialize()
-            logger.info("iTerm terminal controller initialized successfully")
-        except Exception as term_error:
-            logger.error(f"Failed to initialize iTerm terminal controller: {str(term_error)}")
-            raise
-
-        # Initialize layout manager
-        logger.info("Initializing layout manager...")
-        layout_manager = LayoutManager(terminal)
-        logger.info("Layout manager initialized successfully")
-
-        # Initialize agent registry
-        logger.info("Initializing agent registry...")
-        lock_manager = SessionTagLockManager()
-        agent_registry = AgentRegistry(lock_manager=lock_manager)
-        logger.info("Agent registry initialized successfully")
-
-        # Initialize telemetry emitter
-        logger.info("Initializing telemetry emitter...")
-        telemetry = TelemetryEmitter(
-            log_manager=getattr(terminal, "log_manager", None),
-            agent_registry=agent_registry,
-        )
-        logger.info("Telemetry emitter initialized successfully")
-
-        # Initialize notification manager
-        logger.info("Initializing notification manager...")
-        notification_manager = NotificationManager()
-        logger.info("Notification manager initialized successfully")
-
-        # Initialize focus cooldown manager
-        logger.info("Initializing focus cooldown manager...")
-        focus_cooldown = FocusCooldownManager()
-        logger.info("Focus cooldown manager initialized (cooldown=2s)")
-
-        # Initialize feedback system
-        logger.info("Initializing feedback system...")
-        feedback_registry = FeedbackRegistry()
-        feedback_hook_manager = FeedbackHookManager()
-        feedback_forker = FeedbackForker()
-        github_integration = GitHubIntegration()
-        logger.info("Feedback system initialized successfully")
-
-        # Initialize profile manager
-        logger.info("Initializing profile manager...")
-        profile_manager = get_profile_manager(logger)
-        logger.info(f"Profile manager initialized with {len(profile_manager.list_team_profiles())} team profiles")
-
-        # Initialize service manager and hooks
-        logger.info("Initializing service manager...")
-        service_manager = get_service_manager(logger=logger)
-        service_manager.set_terminal(terminal)
-        service_manager.load_global_config()
-        service_hook_manager = get_service_hook_manager(service_manager, logger)
-        logger.info("Service manager initialized successfully")
-
-        # Initialize manager registry for hierarchical task delegation
-        logger.info("Initializing manager registry...")
-        manager_registry = ManagerRegistry()
-        logger.info("Manager registry initialized successfully")
-
-        # Initialize event bus and flow manager
-        logger.info("Initializing event bus and flow manager...")
-        event_bus = get_event_bus()
-        flow_manager = get_flow_manager()
-        await event_bus.start()
-        logger.info("Event bus and flow manager initialized successfully")
-
-        # Initialize role manager
-        logger.info("Initializing role manager...")
-        role_manager = RoleManager(agent_registry=agent_registry)
-        logger.info(f"Role manager initialized with {len(role_manager.list_roles())} role assignments")
-
-        # Initialize memory store
-        logger.info("Initializing memory store...")
-        memory_store = SQLiteMemoryStore()
-        logger.info("Memory store initialized successfully (SQLite with FTS5)")
-
-        # Set global references for resources
-        global _terminal, _logger, _agent_registry, _telemetry, _notification_manager
-        _terminal = terminal
-        _logger = logger
-        _agent_registry = agent_registry
-        _telemetry = telemetry
-        _notification_manager = notification_manager
-        global _tag_lock_manager, _focus_cooldown
-        _tag_lock_manager = lock_manager
-        _focus_cooldown = focus_cooldown
-        global _feedback_registry, _feedback_hook_manager, _feedback_forker, _github_integration
-        _feedback_registry = feedback_registry
-        _feedback_hook_manager = feedback_hook_manager
-        _feedback_forker = feedback_forker
-        _github_integration = github_integration
-        global _profile_manager, _service_manager, _service_hook_manager
-        _profile_manager = profile_manager
-        _service_manager = service_manager
-        _service_hook_manager = service_hook_manager
-        global _manager_registry, _event_bus, _flow_manager, _role_manager, _memory_store
-        _manager_registry = manager_registry
-        _event_bus = event_bus
-        _flow_manager = flow_manager
-        _role_manager = role_manager
-        _memory_store = memory_store
-
-        # Yield the initialized components
-        yield {
-            "connection": connection,
-            "terminal": terminal,
-            "layout_manager": layout_manager,
-            "agent_registry": agent_registry,
-            "telemetry": telemetry,
-            "notification_manager": notification_manager,
-            "tag_lock_manager": lock_manager,
-            "focus_cooldown": focus_cooldown,
-            "feedback_registry": feedback_registry,
-            "feedback_hook_manager": feedback_hook_manager,
-            "feedback_forker": feedback_forker,
-            "github_integration": github_integration,
-            "profile_manager": profile_manager,
-            "service_manager": service_manager,
-            "service_hook_manager": service_hook_manager,
-            "manager_registry": manager_registry,
-            "event_bus": event_bus,
-            "flow_manager": flow_manager,
-            "role_manager": role_manager,
-            "memory_store": memory_store,
-            "logger": logger,
-            "log_dir": log_dir
-        }
-
-    finally:
-        # Clean up resources
-        logger.info("Shutting down iTerm MCP server...")
-        if event_bus:
-            await event_bus.stop()
-
-        # Shutdown OpenTelemetry tracing
-        shutdown_tracing()
-        logger.info("OpenTelemetry tracing shutdown completed")
-
-        logger.info("iTerm MCP server shutdown completed")
+    yield await get_app_context()
 
 
 # Create an MCP server
@@ -428,6 +94,17 @@ async def oauth_protected_resource_mcp_metadata(request: Request) -> JSONRespons
     )
 
 
+@mcp.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> JSONResponse:
+    """Liveness + version handshake endpoint for the shim."""
+    from iterm_mcpy.daemon import package_version
+    return JSONResponse({
+        "status": "ok",
+        "version": package_version(),
+        "pid": os.getpid(),
+    })
+
+
 # Shared helpers (resolve_session, execute_write_request, etc.) live in
 # iterm_mcpy/helpers.py and are imported directly by the tool modules.
 # See iterm_mcpy/helpers.py for the full list.
@@ -466,11 +143,9 @@ async def oauth_protected_resource_mcp_metadata(request: Request) -> JSONRespons
 @mcp.resource("terminal://{session_id}/output")
 async def get_terminal_output(session_id: str) -> str:
     """Get output from a terminal session."""
-    if _terminal is None or _logger is None:
-        raise RuntimeError("Server not initialized. Please wait for initialization to complete.")
-
-    terminal = _terminal
-    logger = _logger
+    app = await get_app_context()
+    terminal = app.terminal
+    logger = app.logger
 
     try:
         session = await terminal.get_session_by_id(session_id)
@@ -487,12 +162,10 @@ async def get_terminal_output(session_id: str) -> str:
 @mcp.resource("terminal://{session_id}/info")
 async def get_terminal_info(session_id: str) -> str:
     """Get information about a terminal session."""
-    if _terminal is None or _logger is None:
-        raise RuntimeError("Server not initialized. Please wait for initialization to complete.")
-
-    terminal = _terminal
-    agent_registry = _agent_registry
-    logger = _logger
+    app = await get_app_context()
+    terminal = app.terminal
+    agent_registry = app.agent_registry
+    logger = app.logger
 
     try:
         session = await terminal.get_session_by_id(session_id)
@@ -521,12 +194,10 @@ async def get_terminal_info(session_id: str) -> str:
 @mcp.resource("terminal://sessions")
 async def list_all_sessions_resource() -> str:
     """Get a list of all terminal sessions."""
-    if _terminal is None or _logger is None:
-        raise RuntimeError("Server not initialized. Please wait for initialization to complete.")
-
-    terminal = _terminal
-    agent_registry = _agent_registry
-    logger = _logger
+    app = await get_app_context()
+    terminal = app.terminal
+    agent_registry = app.agent_registry
+    logger = app.logger
 
     try:
         sessions = list(terminal.sessions.values())
@@ -553,8 +224,9 @@ async def list_all_sessions_resource() -> str:
 @mcp.resource("agents://all")
 async def list_all_agents_resource() -> str:
     """Get a list of all registered agents."""
-    agent_registry = _agent_registry
-    logger = _logger
+    app = await get_app_context()
+    agent_registry = app.agent_registry
+    logger = app.logger
 
     try:
         agents = agent_registry.list_agents()
@@ -575,8 +247,9 @@ async def list_all_agents_resource() -> str:
 @mcp.resource("teams://all")
 async def list_all_teams_resource() -> str:
     """Get a list of all teams."""
-    agent_registry = _agent_registry
-    logger = _logger
+    app = await get_app_context()
+    agent_registry = app.agent_registry
+    logger = app.logger
 
     try:
         teams = agent_registry.list_teams()
@@ -647,28 +320,31 @@ Coordinate responses as needed using write_to_sessions or send_cascade_message.
 @mcp.resource("telemetry://dashboard")
 async def telemetry_dashboard() -> str:
     """Get the current telemetry dashboard state as JSON."""
-    if _terminal is None or _logger is None or _telemetry is None:
-        return json.dumps({"error": "Telemetry not initialized"}, indent=2)
+    app = await get_app_context()
+    terminal = app.terminal
+    telemetry = app.telemetry
+    logger = app.logger
 
     try:
-        state = _telemetry.dashboard_state(_terminal)
+        state = telemetry.dashboard_state(terminal)
         return json.dumps(state, indent=2)
     except Exception as e:
-        _logger.error(f"Error getting telemetry dashboard: {e}")
+        logger.error(f"Error getting telemetry dashboard: {e}")
         return json.dumps({"error": str(e)}, indent=2)
 
 
 @mcp.resource("memory://stats")
 async def memory_stats_resource() -> str:
     """Get memory store statistics as a resource."""
-    if _memory_store is None or _logger is None:
-        return json.dumps({"error": "Memory store not initialized"}, indent=2)
+    app = await get_app_context()
+    memory_store = app.memory_store
+    logger = app.logger
 
     try:
-        stats = await _memory_store.get_stats()
+        stats = await memory_store.get_stats()
         return json.dumps(stats, indent=2)
     except Exception as e:
-        _logger.error(f"Error getting memory stats resource: {e}")
+        logger.error(f"Error getting memory stats resource: {e}")
         return json.dumps({"error": str(e)}, indent=2)
 
 

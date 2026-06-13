@@ -15,9 +15,8 @@ dependencies = [
     "iterm2>=2.7",
     "pyzmq>=25.0.0",
     "pyyaml>=6.0",
-    "mcp>=1.3.0",
-    "grpcio>=1.76.0",
-    "protobuf>=6.31.1",
+    "mcp>=1.8.0",
+    "anyio>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -34,13 +33,10 @@ dev = [
     "black>=23.0.0",
     "mypy>=1.0.0",
     "isort>=5.0.0",
-    "grpcio-tools>=1.76.0",
 ]
 
 [project.scripts]
 iterm-mcp = "iterm_mcpy.main:main"
-iterm-mcp-server = "iterm_mcpy.mcp_server:main"
-iterm-mcp-fastmcp = "iterm_mcpy.fastmcp_server:main"
 
 [tool.setuptools]
 package-dir = {"" = "."}
@@ -77,8 +73,6 @@ source = ["core", "iterm_mcpy", "utils"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
-    "iterm_mcpy/iterm_mcp_pb2.py",
-    "iterm_mcpy/iterm_mcp_pb2_grpc.py",
 ]
 
 [tool.coverage.report]

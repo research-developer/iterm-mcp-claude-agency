@@ -9,10 +9,9 @@ A Python implementation for controlling iTerm2 terminal sessions with support fo
 
 ## Status
 
-✅ **gRPC Migration Complete** - Full gRPC server/client implementation with 17 RPC methods  
 ✅ **Multi-Pane Orchestration** - Parallel session operations with agent/team targeting  
 ✅ **Agent Registry** - Complete agent and team management with cascading messages  
-✅ **Test Coverage** - 98 passing tests with 27.77% code coverage  
+✅ **Test Coverage** - per-module suite via `scripts/test_baseline.py` (36 modules passing; 7 live-iTerm2 integration modules need an interactive session)  
 ✅ **CI/CD** - Automated testing with coverage reporting
 
 See [EPIC_STATUS.md](docs/archive/EPIC_STATUS.md) for the historical implementation status of the multi-agent orchestration epic.
@@ -36,7 +35,7 @@ See [EPIC_STATUS.md](docs/archive/EPIC_STATUS.md) for the historical implementat
 
 - Python 3.8+
 - iTerm2 3.3+ with Python API enabled
-- MCP Python SDK (1.3.0+)
+- MCP Python SDK (1.8.0+, for streamable-HTTP daemon mode)
 
 ## Installation
 
@@ -63,12 +62,13 @@ iterm-mcp/
 │   └── models.py                 # Pydantic request/response models
 ├── iterm_mcpy/                   # Server implementations
 │   ├── __init__.py
-│   ├── fastmcp_server.py         # FastMCP implementation (recommended)
-│   ├── grpc_server.py            # gRPC server implementation
-│   ├── grpc_client.py            # gRPC client for programmatic access
-│   └── iterm_mcp_pb2*.py         # Generated protobuf code
-├── protos/                       # Protocol buffer definitions
-│   └── iterm_mcp.proto
+│   ├── __main__.py               # python -m iterm_mcpy entry
+│   ├── main.py                   # iterm-mcp CLI (shim default; daemon/stdio/status/stop/install)
+│   ├── app_context.py            # Process-level state singleton (AppContext)
+│   ├── daemon.py                 # Singleton streamable-HTTP daemon
+│   ├── shim.py                   # stdio<->HTTP shim (what clients spawn)
+│   ├── fastmcp_server.py         # FastMCP server wiring (mcp instance, resources, prompts)
+│   └── tools/                    # MCP tool modules
 ├── utils/                        # Utility functions
 │   ├── __init__.py
 │   └── logging.py                # Logging utilities
@@ -86,58 +86,38 @@ iterm-mcp/
    ```bash
    ./scripts/watch_tests.sh
    ```
-4. Generate gRPC code (if modifying protos):
-   ```bash
-   python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. protos/iterm_mcp.proto
-   ```
 
 ## Usage
 ### MCP Integration with the Official Python SDK
 
-We provide two server implementations:
-1. **FastMCP Implementation** (recommended) - Uses the official MCP Python SDK
-2. **Legacy Implementation** - Custom MCP server implementation (for backward compatibility)
+### Architecture: singleton daemon
+
+Both Claude Code and Claude Desktop spawn the stdio shim (`iterm-mcp` / `python -m iterm_mcpy`). The shim discovers or auto-starts a shared singleton daemon over streamable HTTP on `127.0.0.1:12340-12349`. All clients share one iTerm2 connection and one agent/team registry — cross-client agent visibility is the point of this architecture. The daemon auto-starts on first client connect; its state is advertised in `~/.iterm-mcp/daemon.json`; `iterm-mcp status` / `iterm-mcp stop` manage it. Note: the registry's implicit *active session* is shared across all connected clients (last writer wins) — prefer explicit session/agent/team targets when multiple clients are attached.
+
+```bash
+iterm-mcp                # stdio shim (what Claude Code/Desktop spawn); auto-starts the shared daemon
+iterm-mcp daemon         # run the singleton HTTP daemon in the foreground
+iterm-mcp stdio          # single-process stdio server (debugging; no daemon)
+iterm-mcp status|stop    # inspect / stop the shared daemon
+iterm-mcp install        # write Claude Desktop config + print Claude Code add command
+```
 
 ### Running the MCP Server
 
 ```bash
-# Run the FastMCP server (recommended)
-python -m iterm_mcp_python.server.main
+# Run the shim (auto-starts the shared daemon)
+iterm-mcp
 
-# Run the legacy MCP server
-python -m iterm_mcp_python.server.main --legacy
-
-# Run the demo (not MCP server)
-python -m iterm_mcp_python.server.main --demo
-
-# Enable debug logging
-python -m iterm_mcp_python.server.main --debug
+# Or equivalently
+python -m iterm_mcpy
 ```
 
 ### Installing the MCP Server for Claude Desktop
 
-We provide a script to install the server in Claude Desktop:
+Use the built-in install command:
 
 ```bash
-# Run the installation script
-python install_claude_desktop.py
-```
-
-This will:
-1. Register the server in Claude Desktop's configuration
-2. Check if the server is already running
-3. Offer to start the server if it's not running
-
-**IMPORTANT**: You must have the server running in a separate terminal window while using it with Claude Desktop. The server won't start automatically when Claude Desktop launches.
-
-To start the server manually:
-```bash
-python -m iterm_mcp_python.server.main
-```
-
-If you encounter connection errors in Claude Desktop, you can diagnose them with:
-```bash
-python install_claude_desktop.py --check-error "your error message"
+iterm-mcp install --desktop
 ```
 
 ### Debugging with MCP Inspector
@@ -145,13 +125,13 @@ python install_claude_desktop.py --check-error "your error message"
 For development and debugging, you can use the MCP Inspector:
 
 ```bash
-mcp dev -m iterm_mcp_python.server.fastmcp_server
+mcp dev iterm_mcpy/fastmcp_server.py
 ```
 
 ### Important Implementation Notes
 
 1. **Process Termination**:  
-   The server uses SIGKILL for termination to prevent hanging on exit. This ensures clean exit but bypasses Python's normal cleanup process. If you're developing and need proper cleanup, modify the signal handler in `main.py`.
+   The daemon translates SIGTERM into a clean `SystemExit` so `iterm-mcp stop` (and plain `kill`) clears the `~/.iterm-mcp/daemon.json` state file on the way out. The state-file cleanup is pid-guarded so an old daemon's exit never deletes a successor's registration.
 
 2. **New FastMCP API**:  
    The FastMCP implementation uses the decorator-based API from the official MCP Python SDK. Tools are defined with `@mcp.tool()`, resources with `@mcp.resource()`, and prompts with `@mcp.prompt()`.
@@ -172,8 +152,8 @@ mcp dev -m iterm_mcp_python.server.fastmcp_server
 ```python
 import asyncio
 import iterm2
-from iterm_mcp_python.core.terminal import ItermTerminal
-from iterm_mcp_python.core.layouts import LayoutManager, LayoutType
+from core.terminal import ItermTerminal
+from core.layouts import LayoutManager, LayoutType
 
 async def my_script():
     # Connect to iTerm2
@@ -212,7 +192,7 @@ asyncio.run(my_script())
 ```python
 import asyncio
 import iterm2
-from iterm_mcp_python.core.terminal import ItermTerminal
+from core.terminal import ItermTerminal
 
 async def my_advanced_script():
     # Connect to iTerm2
@@ -318,7 +298,7 @@ session_map = await layout_manager.create_layout(
     ],
 )
 
-# When using the FastMCP or gRPC CreateSessions APIs the same hierarchy is
+# When using the sessions create API the same hierarchy is
 # auto-registered in AgentRegistry:
 # create_sessions(layout="quad", session_configs=[...])
 
@@ -504,7 +484,7 @@ list_agents(team="frontend")  # Returns alice and bob
 
 ### Playbook Orchestration
 
-FastMCP now exposes an `orchestrate_playbook` tool (and matching `OrchestratePlaybook` gRPC method) so you can define multi-team workflows once and execute them with a single request:
+The `orchestrate` tool lets you define multi-team workflows once and execute them with a single request:
 
 1. **Create a layout** with `CreateSessionsRequest` (pane names, optional agent/team assignment, initial commands).
 2. **Run command blocks** defined as `PlaybookCommand` entries (parallel flags + `SessionMessage` targets).
@@ -657,41 +637,6 @@ result = registry.resolve_cascade_targets(broadcast_cascade)
 - Agent-specific messages resolve to only that agent
 - Broadcasts reach all registered agents
 
-### gRPC Client
-
-For programmatic access outside MCP, use the gRPC client:
-
-```python
-from iterm_mcpy.grpc_client import ITermClient
-
-# Using context manager
-with ITermClient(host='localhost', port=50051) as client:
-    # List sessions
-    sessions = client.list_sessions()
-
-    # Create sessions with layout
-    response = client.create_sessions(
-        sessions=[
-            {"name": "Agent1", "agent": "alice", "team": "frontend"},
-            {"name": "Agent2", "agent": "bob", "team": "backend"}
-        ],
-        layout="HORIZONTAL_SPLIT"
-    )
-
-    # Write to multiple sessions
-    client.write_to_sessions(
-        messages=[{"content": "echo hello", "targets": [{"team": "frontend"}]}],
-        parallel=True
-    )
-
-    # Send cascade message
-    client.send_cascade_message(
-        broadcast="Status check",
-        teams={"frontend": "Run tests"},
-        agents={"alice": "Review PR #42"}
-    )
-```
-
 ### Session Locking
 
 Agents can lock sessions for exclusive access, preventing other agents from writing:
@@ -733,10 +678,9 @@ Agents and teams are persisted to JSONL files in `~/.iterm_mcp_logs/`:
 
 ## Testing
 
-The project includes a comprehensive test suite with 98+ passing tests covering:
+The project includes a comprehensive test suite covering:
 - Core session and terminal management
 - Agent and team orchestration
-- gRPC server and client functionality
 - Command output tracking
 - Model validation
 - Logging infrastructure
@@ -765,8 +709,6 @@ python -m pytest tests/test_agent_registry.py -v
 - `test_models.py` - Pydantic model validation
 - `test_agent_registry.py` - Agent/team management
 - `test_command_output_tracking.py` - Command tracking logic
-- `test_grpc_smoke.py` - gRPC service smoke tests
-- `test_grpc_client.py` - gRPC client tests
 
 **Integration Tests** (require macOS + iTerm2):
 - `test_basic_functionality.py` - Core session operations
@@ -903,7 +845,7 @@ docker run -d --name jaeger \
 Then start the server:
 
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 python -m iterm_mcpy.fastmcp_server
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 iterm-mcp daemon
 ```
 
 View traces at http://localhost:16686
@@ -913,7 +855,7 @@ View traces at http://localhost:16686
 Configure the OTLP endpoint to your Tempo instance:
 
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 python -m iterm_mcpy.fastmcp_server
+OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 iterm-mcp daemon
 ```
 
 #### Console Debugging
@@ -921,7 +863,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 python -m iterm_mcpy.fastmcp_serve
 For local debugging without a backend:
 
 ```bash
-OTEL_CONSOLE_EXPORTER=true python -m iterm_mcpy.fastmcp_server
+OTEL_CONSOLE_EXPORTER=true iterm-mcp daemon
 ```
 
 This prints spans to stdout.
