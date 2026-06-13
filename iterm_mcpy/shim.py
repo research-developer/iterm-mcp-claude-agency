@@ -23,9 +23,9 @@ from iterm_mcpy.daemon import STATE_DIR, package_version, read_state
 
 def probe_health(state: dict):
     """GET /health; return parsed body or None if unreachable/broken."""
-    host = state.get("host", "127.0.0.1")
-    url = f"http://{host}:{state['port']}/health"
     try:
+        host = state.get("host", "127.0.0.1")
+        url = f"http://{host}:{state['port']}/health"
         with urllib.request.urlopen(url, timeout=1.0) as resp:
             return json.loads(resp.read())
     except Exception:
@@ -35,12 +35,12 @@ def probe_health(state: dict):
 def spawn_daemon() -> None:
     """Start the daemon detached; logs go to ~/.iterm-mcp/daemon.log."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    log = open(STATE_DIR / "daemon.log", "ab")
-    subprocess.Popen(
-        [sys.executable, "-m", "iterm_mcpy", "daemon"],
-        stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    with open(STATE_DIR / "daemon.log", "ab") as log:
+        subprocess.Popen(
+            [sys.executable, "-m", "iterm_mcpy", "daemon"],
+            stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
 
 
 def terminate_daemon(pid: int) -> None:

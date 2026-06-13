@@ -95,13 +95,21 @@ class TestShimEndToEnd(unittest.TestCase):
                 if sel.select(timeout=1.0):
                     line = proc.stdout.readline()
                     break
-            self.assertTrue(line, "no response from shim within 30s "
-                                  f"(stderr: {proc.stderr.read1(500) if hasattr(proc.stderr, 'read1') else ''})")
+            self.assertTrue(line, "no response from shim within 30s (see ~/.iterm-mcp/daemon.log)")
             resp = _json.loads(line)
             self.assertEqual(resp["id"], 1)
             self.assertIn("serverInfo", resp["result"])
         finally:
             proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            for pipe in (proc.stdin, proc.stdout, proc.stderr):
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
             # Stop the daemon the shim auto-spawned so it doesn't linger.
             from iterm_mcpy import daemon as d
             from iterm_mcpy import shim as s
