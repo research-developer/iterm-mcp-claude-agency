@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ControIDE Driver</title>
+  <link rel="stylesheet" href="/driver.css" />
+</head>
+<body>
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header>
+    <h1>ControIDE Driver</h1>
+    <div id="status">
+      <span id="status-dot" class="connecting"></span>
+      <span id="status-text">Connecting…</span>
+    </div>
+  </header>
+
+  <!-- ── Main content ────────────────────────────────────────────────────── -->
+  <main>
+
+    <!-- Placeholder shown when no question is pending -->
+    <div id="placeholder">
+      <span>⏳</span>
+      No question pending — Claude Code is running freely.
+    </div>
+
+    <!-- Question card (hidden until a question arrives via SSE) -->
+    <div id="question-card" role="dialog" aria-live="assertive" aria-label="Pending question">
+
+      <!-- Hook type badge (Stop Hook / Pre-Tool Use) -->
+      <span id="hook-type-badge"></span>
+
+      <!-- Prompt text from Claude Code -->
+      <pre id="prompt-text"></pre>
+
+      <!-- Clickable option tiles -->
+      <div id="options-grid" role="group" aria-label="Options"></div>
+
+      <!-- Custom free-text input (shown when "Custom…" tile is clicked) -->
+      <div id="custom-area">
+        <label for="custom-input">Custom instruction (Ctrl+Enter to submit)</label>
+        <textarea
+          id="custom-input"
+          rows="3"
+          placeholder="Describe what Claude should do instead…"
+        ></textarea>
+        <button id="custom-submit" type="button">Submit</button>
+      </div>
+
+      <!-- Shown while POSTing to /api/answer -->
+      <div id="waiting-indicator">Submitting answer…</div>
+
+    </div><!-- #question-card -->
+
+  </main>
+
+  <!-- Toast container (bottom-right) -->
+  <div id="toast-container" aria-live="polite"></div>
+
+  <script src="/driver.js"></script>
+</body>
+</html>
