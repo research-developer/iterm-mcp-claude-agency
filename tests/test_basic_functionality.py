@@ -10,6 +10,7 @@ import iterm2
 from core.terminal import ItermTerminal
 from core.layouts import LayoutManager, LayoutType
 from core.session import ItermSession
+from core.test_window_tracker import mark_session
 from tests.live_iterm_base import LiveItermTestCase
 
 
@@ -92,6 +93,14 @@ class TestBasicFunctionality(LiveItermTestCase):
                 pane_names=["LeftPane", "RightPane"]
             )
 
+            # Tag every pane session so the base-class teardown sweep can close
+            # them on failure (LayoutManager opens windows outside the tagged
+            # path, so we tag after the fact).
+            for session_id in session_map.values():
+                pane = await self.terminal.get_session_by_id(session_id)
+                if pane is not None:
+                    await mark_session(pane.session, self._tag)
+
             # Verify that we got session IDs back for both panes
             for name in ["LeftPane", "RightPane"]:
                 session_id = session_map[name]
@@ -99,7 +108,7 @@ class TestBasicFunctionality(LiveItermTestCase):
                 self.assertIsNotNone(session)
                 # Simply verify the session exists - don't check names as they might change
 
-            # Clean up the created sessions
+            # Clean up the created sessions (in-body cleanup; teardown is a backup).
             for session_id in session_map.values():
                 await self.terminal.close_session(session_id)
 

@@ -12,6 +12,7 @@ import iterm2
 from core.terminal import ItermTerminal
 from core.layouts import LayoutManager, LayoutType
 from core.session import ItermSession
+from core.test_window_tracker import mark_session
 from utils.logging import ItermLogManager, ItermSessionLogger
 from tests.live_iterm_base import LiveItermTestCase
 
@@ -121,8 +122,10 @@ class TestLogging(LiveItermTestCase):
             # Get the log file path before closing
             log_file = self.test_session.logger.log_file
 
-            # Create another session we can use after closing the test session
+            # Create another session we can use after closing the test session.
+            # Tag it so the base-class teardown closes it on failure.
             other_session = await self.terminal.create_window()
+            await mark_session(other_session.session, self._tag)
 
             # Close the test session
             await self.terminal.close_session(self.test_session.id)

@@ -13,6 +13,7 @@ import iterm2
 from core.terminal import ItermTerminal
 from core.layouts import LayoutManager, LayoutType
 from core.session import ItermSession
+from core.test_window_tracker import mark_session
 from utils.logging import ItermLogManager, ItermSessionLogger
 from tests.live_iterm_base import LiveItermTestCase
 
@@ -184,6 +185,13 @@ class TestAdvancedFeatures(LiveItermTestCase):
 
             logger.info("Creating multiple sessions...")
             session_map = await self.terminal.create_multiple_sessions(session_configs)
+
+            # Tag all created sessions so the base-class teardown sweep can
+            # close them on failure (create_multiple_sessions doesn't tag).
+            for session_id in session_map.values():
+                pane = await self.terminal.get_session_by_id(session_id)
+                if pane is not None:
+                    await mark_session(pane.session, self._tag)
 
             # Verify we got sessions back
             self.assertEqual(len(session_map), 2, "Should have created 2 sessions")
