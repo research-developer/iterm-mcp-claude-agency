@@ -14,6 +14,12 @@ import os
 import subprocess
 from typing import Optional
 
+from core.iterm_path_monitor import (  # noqa: E402
+    get_user_variable,
+    set_user_variable,
+    get_session_path,
+)
+
 #: The session variable that holds a session's project (absolute path).
 PROJECT_VAR = "mcp_project"  # stored by iTerm as ``user.mcp_project``
 
@@ -50,3 +56,24 @@ def build_setuservar_escape(name: str, value: str) -> str:
     """Build iTerm2's OSC 1337 SetUserVar escape (value base64-encoded)."""
     b64 = base64.b64encode(value.encode()).decode()
     return f"\033]1337;SetUserVar={name}={b64}\007"
+
+
+async def get_session_project(connection, session_id: str) -> Optional[str]:
+    """Return a session's project, inferring + pinning it once if unset.
+
+    Sticky / first-observation-wins: if ``user.mcp_project`` is already set
+    (declared by the agent or pinned earlier), it is returned unchanged and
+    never overwritten. Otherwise the project is inferred from the session's
+    current CWD (git repo root) and pinned by setting ``user.mcp_project``
+    exactly once. Returns ``None`` if the project is unset and no CWD is
+    available yet (nothing is pinned in that case).
+    """
+    existing = await get_user_variable(connection, session_id, PROJECT_VAR)
+    if existing:
+        return existing
+    cwd = await get_session_path(connection, session_id)
+    project = resolve_project(cwd)
+    if not project:
+        return None
+    await set_user_variable(connection, session_id, f"user.{PROJECT_VAR}", project)
+    return project
