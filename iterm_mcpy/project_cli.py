@@ -6,6 +6,7 @@ declaration hook knows to stop asking. `project get` reports the marker.
 """
 
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -16,7 +17,9 @@ MARKER_DIR = os.path.expanduser("~/.iterm-mcp/projects")
 
 
 def _key(session_id: Optional[str]) -> str:
-    return session_id or os.environ.get("CLAUDE_SESSION_ID", "") or "default"
+    """Filesystem-safe marker key for a session (sanitized)."""
+    raw = session_id or os.environ.get("CLAUDE_SESSION_ID", "") or "default"
+    return re.sub(r"[^A-Za-z0-9_\-]", "_", raw) or "default"
 
 
 def cmd_set(repo: str, session_id: Optional[str] = None) -> None:
@@ -32,6 +35,7 @@ def cmd_set(repo: str, session_id: Optional[str] = None) -> None:
 
 
 def cmd_get(session_id: Optional[str] = None) -> None:
+    """Print the current session's declared project, or a 'not set' notice."""
     marker = Path(MARKER_DIR) / _key(session_id)
     if marker.exists():
         print(marker.read_text().strip())
