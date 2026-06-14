@@ -77,3 +77,11 @@ async def get_session_project(connection, session_id: str) -> Optional[str]:
         return None
     await set_user_variable(connection, session_id, PROJECT_VAR, project)
     return project
+
+
+# --- Future seam (manager phase): per-project activity summaries ---
+# def project_summary(project_id: str, *, since=None) -> dict:
+#     """Digest recent activity for a project (captured actions + notifications +
+#     bus messages stamped with this project) for a per-project manager agent.
+#     Built in the manager phase; the ``project`` stamp on those streams is what
+#     makes it queryable."""

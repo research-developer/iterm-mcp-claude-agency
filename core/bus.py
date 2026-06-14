@@ -198,6 +198,9 @@ class AgentMessageBus:
             # consumers that subscribe without a specific name.
             return [f"agent:{a.name}" for a in agents] + ["broadcast"]
 
+        # Future (manager phase): a ``project:<id>`` branch mirrors team: —
+        # strip the prefix and fan out via agent_registry.list_agents(project=...).
+        # Needs a first-class Agent.project field (deferred), so not added here.
         if recipient.startswith("team:"):
             team_name = recipient[len("team:"):]
             if agent_registry is None:
