@@ -20,14 +20,14 @@ def register_all(mcp):
         sessions, agents, teams, managers,
         feedback, memory, services, roles, workflows,
         messages, orchestrate, delegate, wait_for, subscribe, telemetry,
-        bus,
+        bus, projects,
     )
 
     _MODULES = [
         sessions, agents, teams, managers,
         feedback, memory, services, roles, workflows,
         messages, orchestrate, delegate, wait_for, subscribe, telemetry,
-        bus,
+        bus, projects,
     ]
 
     for mod in _MODULES:
