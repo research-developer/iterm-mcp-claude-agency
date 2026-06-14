@@ -14,7 +14,7 @@ import os
 import subprocess
 from typing import Optional
 
-from core.iterm_path_monitor import (  # noqa: E402
+from core.iterm_path_monitor import (
     get_user_variable,
     set_user_variable,
     get_session_path,
@@ -75,5 +75,5 @@ async def get_session_project(connection, session_id: str) -> Optional[str]:
     project = resolve_project(cwd)
     if not project:
         return None
-    await set_user_variable(connection, session_id, f"user.{PROJECT_VAR}", project)
+    await set_user_variable(connection, session_id, PROJECT_VAR, project)
     return project

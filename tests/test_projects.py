@@ -63,7 +63,7 @@ class TestSessionProject(unittest.IsolatedAsyncioTestCase):
             got = await projects.get_session_project(conn, "sess-2")
         self.assertEqual(got, "/Users/me/repoA")
         setv.assert_awaited_once()
-        self.assertEqual(setv.await_args.args[1:], ("sess-2", "user.mcp_project", "/Users/me/repoA"))
+        self.assertEqual(setv.await_args.args[1:], ("sess-2", "mcp_project", "/Users/me/repoA"))
 
     async def test_returns_none_and_does_not_pin_when_no_cwd(self):
         with mock.patch("core.projects.get_user_variable", new=mock.AsyncMock(return_value="")), \
