@@ -1136,6 +1136,18 @@ class TestSessionsProjectFilter(unittest.TestCase):
         ids = [s["session_id"] for s in parsed["data"]]
         self.assertEqual(ids, ["a"])
 
+    def test_unfiltered_list_does_not_resolve_project(self):
+        from iterm_mcpy.tools.sessions import sessions
+        terminal = MagicMock()
+        terminal.sessions = {"a": self._session("a")}
+        reg = MagicMock(); reg.get_agent_by_session = MagicMock(return_value=None)
+        ctx = _make_ctx(terminal=terminal, agent_registry=reg)
+        gsp = AsyncMock(return_value="/repoA")
+        with patch("iterm_mcpy.tools.sessions.get_session_project", new=gsp):
+            parsed = asyncio.run(sessions(ctx=ctx, op="GET"))  # no project filter
+        gsp.assert_not_awaited()
+        self.assertIsNone(parsed["data"][0].get("project"))
+
 
 if __name__ == "__main__":
     unittest.main()

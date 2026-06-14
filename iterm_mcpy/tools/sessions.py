@@ -245,10 +245,12 @@ async def _list_sessions_core(
         if team is not None and (agent_obj is None or team not in (agent_obj.teams or [])):
             continue
 
-        # Apply project filter.
-        session_project = await get_session_project(terminal.connection, session.id)
-        if project is not None and session_project != project:
-            continue
+        # Resolve the project only when filtering — avoids mutating/slowing plain lists.
+        session_project: Optional[str] = None
+        if project is not None:
+            session_project = await get_session_project(terminal.connection, session.id)
+            if session_project != project:
+                continue
 
         # Apply role filter.
         if role_session_ids is not None and session.id not in role_session_ids:
