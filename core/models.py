@@ -958,6 +958,7 @@ class SessionInfo(BaseModel):
     last_activity: Optional[datetime] = Field(default=None, description="Time of last output change")
     last_message: Optional[str] = Field(default=None, description="Last Claude response (truncated)")
     process_name: Optional[str] = Field(default=None, description="Running process name")
+    project: Optional[str] = Field(default=None, description="Project root directory for this session")
 
     # SP2: fields returned by HEAD (compact projection).
     # is_processing and locked give just enough to identify a session's state.
