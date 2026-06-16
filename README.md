@@ -946,6 +946,19 @@ send_cascade_message(
 
 For a detailed architectural comparison, see [docs/claude-code-mcp-analysis.md](docs/claude-code-mcp-analysis.md).
 
+## Voice control (experimental)
+
+A local voice layer (`core/voice/`, `voice` CLI) lets the agent speak prompts
+and capture spoken multiple-choice answers. All on-device: `supertonic`/`say`
+(TTS), `sox`/`ffmpeg` (capture), `whisper-cli` + `ggml-base.en` (STT).
+
+Setup: `brew install sox whisper-cpp` and download the model to
+`~/.cache/whisper/ggml-base.en.bin`. Grant the terminal Microphone permission.
+
+Usage: `voice arm` to permit capture (idle auto-disarms after 10 min),
+`voice disarm` to stop. The agent drives `voice menu --options '<json>'`
+and reads the JSON action. Nothing leaves the machine. Tracking: #138.
+
 ## License
 
 [MIT](LICENSE)
