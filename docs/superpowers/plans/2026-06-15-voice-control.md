@@ -538,6 +538,15 @@ class TestCapture(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 capture.record(mode="vad")
 
+    def test_cleanup_removes_wav(self):
+        with mock.patch("core.voice.capture.os.remove") as rm:
+            capture.cleanup()
+        rm.assert_called_once_with(capture.WAV_PATH)
+
+    def test_cleanup_ignores_missing_file(self):
+        with mock.patch("core.voice.capture.os.remove", side_effect=FileNotFoundError):
+            capture.cleanup()  # must not raise
+
 
 class TestSTT(unittest.TestCase):
     def test_transcribe_builds_whisper_cmd_and_cleans(self):
@@ -639,6 +648,14 @@ def _record_ptt(max_secs: int) -> str:
         except subprocess.TimeoutExpired:
             proc.terminate()
     return WAV_PATH
+
+
+def cleanup() -> None:
+    """Delete the transient capture wav once it has been consumed."""
+    try:
+        os.remove(WAV_PATH)
+    except FileNotFoundError:
+        pass
 ```
 
 ```python
@@ -715,6 +732,7 @@ class TestVoiceCli(unittest.TestCase):
              mock.patch("core.voice.cli._beep"), \
              mock.patch("core.voice.tts.speak"), \
              mock.patch("core.voice.capture.record", return_value="/tmp/x.wav"), \
+             mock.patch("core.voice.capture.cleanup"), \
              mock.patch("core.voice.stt.transcribe", return_value="banana"), \
              mock.patch("builtins.print") as out:
             self._run(["menu", "--options", opts])
@@ -737,6 +755,7 @@ class TestVoiceCli(unittest.TestCase):
              mock.patch("core.voice.session.touch"), \
              mock.patch("core.voice.cli._beep"), \
              mock.patch("core.voice.capture.record", return_value="/tmp/x.wav"), \
+             mock.patch("core.voice.capture.cleanup"), \
              mock.patch("core.voice.stt.transcribe", return_value="open answer"), \
              mock.patch("builtins.print") as out:
             self._run(["listen"])
@@ -818,6 +837,7 @@ def cmd_menu(args: argparse.Namespace) -> None:
     _beep()
     wav = capture.record(mode=args.mode)
     transcript = stt.transcribe(wav)
+    capture.cleanup()
     session.touch()
     _emit(classify(transcript, options))
 
@@ -830,6 +850,7 @@ def cmd_listen(args: argparse.Namespace) -> None:
     _beep()
     wav = capture.record(mode=args.mode)
     transcript = stt.transcribe(wav)
+    capture.cleanup()
     session.touch()
     print(transcript)
 
