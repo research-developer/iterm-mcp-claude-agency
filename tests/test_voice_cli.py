@@ -55,5 +55,18 @@ class TestVoiceCli(unittest.TestCase):
         self.assertIn("open answer", " ".join(str(c) for c in out.call_args_list))
 
 
+class TestVoicePackaging(unittest.TestCase):
+    def test_voice_package_importable_as_module_main(self):
+        import importlib
+        # __main__ must import cleanly so `python -m core.voice` works.
+        importlib.import_module("core.voice.__main__")
+
+    def test_pyproject_registers_voice_script_and_package(self):
+        from pathlib import Path
+        text = Path(__file__).resolve().parents[1].joinpath("pyproject.toml").read_text()
+        self.assertIn('voice = "core.voice.cli:main"', text)
+        self.assertIn('"core.voice"', text)
+
+
 if __name__ == "__main__":
     unittest.main()
