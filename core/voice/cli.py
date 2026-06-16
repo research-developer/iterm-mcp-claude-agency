@@ -3,6 +3,10 @@
 `menu` is the core primitive: assert armed -> speak+show options -> beep ->
 record -> transcribe -> classify -> print one JSON Action. The agent reads
 that JSON and owns every downstream decision.
+
+Every code path that the agent consumes (`menu`, `listen`) prints exactly one
+JSON Action — including failures — so a missing backend or malformed input is
+a structured `error`/`refused`, never a raw traceback the agent cannot parse.
 """
 import argparse
 import json
@@ -16,7 +20,13 @@ from core.voice.models import Action, Option
 
 
 def _beep() -> None:
-    subprocess.run(["afplay", "/System/Library/Sounds/Ping.aiff"], check=False)
+    result = subprocess.run(
+        ["afplay", "/System/Library/Sounds/Ping.aiff"], check=False)
+    if result.returncode != 0:
+        # The beep is the audible consent cue; if it fails the capture is no
+        # longer fully announced, so make that visible rather than silent.
+        print("voice: beep failed (afplay exit {})".format(result.returncode),
+              file=sys.stderr)
 
 
 def _parse_options(raw: str) -> List[Option]:
@@ -46,11 +56,25 @@ def cmd_say(args: argparse.Namespace) -> None:
     tts.speak(args.text, voice=args.voice)
 
 
+def _capture_transcript(mode: str) -> str:
+    """Record + transcribe, always clearing the wav. Raises RuntimeError on
+    backend failure so callers can emit a typed `error` rather than crash."""
+    try:
+        wav = capture.record(mode=mode)
+        return stt.transcribe(wav)
+    finally:
+        capture.cleanup()
+
+
 def cmd_menu(args: argparse.Namespace) -> None:
     if not session.is_armed():
         _emit(Action("refused", value="disarmed"))
         return
-    options = _parse_options(args.options)
+    try:
+        options = _parse_options(args.options)
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        _emit(Action("refused", value="bad-options: {}".format(exc)))
+        return
     spoken = (args.prompt + ". ") if args.prompt else ""
     spoken += "; ".join(
         "{}. {}".format(i + 1, o.spoken) for i, o in enumerate(options)
@@ -58,9 +82,11 @@ def cmd_menu(args: argparse.Namespace) -> None:
     print("🎙 " + spoken, file=sys.stderr)
     tts.speak(spoken)
     _beep()
-    wav = capture.record(mode=args.mode)
-    transcript = stt.transcribe(wav)
-    capture.cleanup()
+    try:
+        transcript = _capture_transcript(args.mode)
+    except RuntimeError as exc:
+        _emit(Action("error", value=str(exc)))
+        return
     session.touch()
     _emit(classify(transcript, options))
 
@@ -71,9 +97,11 @@ def cmd_listen(args: argparse.Namespace) -> None:
         return
     print("🎙 listening…", file=sys.stderr)
     _beep()
-    wav = capture.record(mode=args.mode)
-    transcript = stt.transcribe(wav)
-    capture.cleanup()
+    try:
+        transcript = _capture_transcript(args.mode)
+    except RuntimeError as exc:
+        _emit(Action("error", value=str(exc)))
+        return
     session.touch()
     print(transcript)
 

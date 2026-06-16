@@ -41,8 +41,8 @@ A proof-of-concept already validates the full loop on the primary machine: `supe
 
 ### `match.py` — the classifier (the voice layer's only "intelligence")
 - `classify(transcript: str, options: list[Option]) -> Action`
-- `Action = {action, value, transcript, confidence}` where `action ∈ {select, repeat, regenerate, drilldown, freeform, nomatch}`.
-- Resolution order: explicit control phrases → leading ordinal ("two"/"2"/"the second") → keyword/fuzzy match against option labels → else `freeform` (non-empty) / `nomatch` (empty).
+- `Action = {action, value, transcript, confidence}` where `action ∈ {select, repeat, regenerate, drilldown, freeform, nomatch, refused, error}`.
+- Resolution order: explicit control phrases (word-boundary matched) → leading ordinal ("two"/"2"/"the second") → keyword/fuzzy match against option labels **and spoken text** → else `freeform` (non-empty) / `nomatch` (empty). Only a *leading* token may pick an option, so a trailing noun ("the banana one") never selects option 1.
 - Control-phrase vocabulary (configurable, with sensible defaults): repeat = {"repeat", "say again", "what were they"}; regenerate = {"none of these", "something else", "different options"} (remaining words captured as `value` = direction); drilldown = {"drill down", "go deeper", "expand", "more on <label>"}.
 
 ### `session.py` — arm state & consent
@@ -97,11 +97,12 @@ JSON Action returned to agent:
 
 | Condition | Behaviour |
 |---|---|
-| Not armed | `{action:"refused", reason:"disarmed"}` → agent falls back to text |
+| Not armed | `{action:"refused", value:"disarmed"}` → agent falls back to text |
+| Malformed/incomplete `--options` | `{action:"refused", value:"bad-options: …"}` — never a traceback |
 | Silence / empty capture | `{action:"nomatch", transcript:""}` → repeat once, then fall back |
 | Transcript matches no option | `freeform` (agent interprets) or repeat |
-| Backend missing (supertonic/whisper) | fall back (`say`) / clear error message |
-| Mic permission lost (ffmpeg error) | surface permission guidance |
+| STT/capture backend fails (missing whisper model, sox/ffmpeg error, lost mic permission) | raises → CLI emits `{action:"error", value:"<msg>"}` so the agent can branch — never a silent `nomatch`. The stale wav is cleared before each capture so a failed recording can't replay a prior turn. |
+| TTS backend fails | `say` fallback if supertonic absent; non-zero exit warned on stderr |
 | Runaway capture | hard `max_secs` cap ends recording |
 
 ## Testing (headless — honors the no-live-windows / no-casual-audio rules)

@@ -31,9 +31,11 @@ class Action:
     """The voice layer's classified result.
 
     action is one of:
-        select | repeat | regenerate | drilldown | freeform | nomatch | refused
+        select | repeat | regenerate | drilldown | freeform | nomatch
+        | refused | error
     value carries the option id (select/drilldown), the spoken direction
-    (regenerate), or a reason (refused).
+    (regenerate), a reason (refused, e.g. "disarmed"/"bad-options: ..."),
+    or a backend error message (error).
     """
 
     action: str

@@ -4,6 +4,7 @@ Capture is permitted only while armed; arming auto-expires after an idle
 window so authorization never lingers silently.
 """
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Dict
@@ -19,7 +20,11 @@ def _now() -> float:
 def _read() -> Dict[str, object]:
     try:
         return json.loads(STATE_PATH.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        print("voice: state file {} is corrupt; treating as disarmed".format(
+            STATE_PATH), file=sys.stderr)
         return {}
 
 
