@@ -10,6 +10,7 @@ a structured `error`/`refused`, never a raw traceback the agent cannot parse.
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 from typing import List
@@ -20,13 +21,11 @@ from core.voice.models import Action, Option
 
 
 def _beep() -> None:
-    result = subprocess.run(
-        ["afplay", "/System/Library/Sounds/Ping.aiff"], check=False)
-    if result.returncode != 0:
-        # The beep is the audible consent cue; if it fails the capture is no
-        # longer fully announced, so make that visible rather than silent.
-        print("voice: beep failed (afplay exit {})".format(result.returncode),
-              file=sys.stderr)
+    # The beep is the audible consent cue; route it through the configured
+    # output device (so it's in-ear, not on the room speakers) and make a
+    # failure visible rather than silent.
+    if not tts.play_cue():
+        print("voice: cue failed to play", file=sys.stderr)
 
 
 def _parse_options(raw: str) -> List[Option]:
@@ -54,6 +53,22 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 def cmd_say(args: argparse.Namespace) -> None:
     tts.speak(args.text, voice=args.voice)
+
+
+def cmd_devices(args: argparse.Namespace) -> None:
+    devices = tts.list_devices()
+    if not devices:
+        print("voice: sounddevice not available — `pip install sounddevice` to "
+              "list/route audio devices.")
+        return
+    current = os.environ.get("VOICE_OUTPUT_DEVICE", "").strip().lower()
+    print("Audio devices (set VOICE_OUTPUT_DEVICE to an output name to route TTS there):")
+    for d in devices:
+        io = "{}/{}".format("in" if d["input"] else "  ",
+                            "out" if d["output"] else "   ")
+        mark = ("   <- VOICE_OUTPUT_DEVICE"
+                if current and d["output"] and current in d["name"].lower() else "")
+        print("  [{}] {} {}{}".format(d["index"], io, d["name"], mark))
 
 
 def _capture_transcript(mode: str) -> str:
@@ -116,6 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("disarm", help="forbid capture").set_defaults(func=cmd_disarm)
     sub.add_parser("status", help="show arm state").set_defaults(func=cmd_status)
+    sub.add_parser("devices", help="list audio I/O devices").set_defaults(func=cmd_devices)
 
     p_say = sub.add_parser("say", help="speak text")
     p_say.add_argument("text")

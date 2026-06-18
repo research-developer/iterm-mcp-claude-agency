@@ -4,7 +4,7 @@ import json
 import unittest
 from unittest import mock
 
-from core.voice import cli
+from core.voice import cli, tts
 
 
 @contextlib.contextmanager
@@ -126,6 +126,43 @@ class TestVoicePackaging(unittest.TestCase):
         text = Path(__file__).resolve().parents[1].joinpath("pyproject.toml").read_text()
         self.assertIn('voice = "core.voice.cli:main"', text)
         self.assertIn('"core.voice"', text)
+
+
+class TestVoiceDevices(unittest.TestCase):
+    def _run(self, argv):
+        with mock.patch("sys.argv", ["voice"] + argv):
+            cli.main()
+
+    def test_devices_lists_when_available(self):
+        devs = [
+            {"index": 3, "name": "MacBook Pro Microphone", "input": True, "output": False},
+            {"index": 4, "name": "MacBook Pro Speakers", "input": False, "output": True},
+        ]
+        with mock.patch("core.voice.tts.list_devices", return_value=devs), \
+             mock.patch("builtins.print") as out:
+            self._run(["devices"])
+        printed = " ".join(str(c) for c in out.call_args_list)
+        self.assertIn("MacBook Pro Speakers", printed)
+
+    def test_devices_hint_when_unavailable(self):
+        with mock.patch("core.voice.tts.list_devices", return_value=[]), \
+             mock.patch("builtins.print") as out:
+            self._run(["devices"])
+        printed = " ".join(str(c) for c in out.call_args_list)
+        self.assertIn("sounddevice", printed)
+
+
+class TestBeepRouting(unittest.TestCase):
+    def test_beep_delegates_to_play_cue(self):
+        with mock.patch("core.voice.tts.play_cue", return_value=True) as cue:
+            cli._beep()
+        cue.assert_called_once_with()
+
+    def test_beep_warns_when_cue_fails(self):
+        with mock.patch("core.voice.tts.play_cue", return_value=False), \
+             mock.patch("core.voice.cli.print") as warn:
+            cli._beep()
+        self.assertTrue(warn.called)
 
 
 if __name__ == "__main__":

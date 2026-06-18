@@ -1,7 +1,7 @@
 # Voice Control (ControIDE) — Design
 
 **Date:** 2026-06-15
-**Status:** Design (approved → implementation plan)
+**Status:** Implemented on `feat/voice-control` — incl. Bluetooth / non-default output-device routing
 **Tracking issue:** [#138](https://github.com/research-developer/iterm-mcp-claude-agency/issues/138)
 
 ## Goal
@@ -24,10 +24,12 @@ A proof-of-concept already validates the full loop on the primary machine: `supe
 
 ## Components — `core/voice/`
 
-### `tts.py` — speech out
-- `speak(text: str, voice: str | None = None) -> None`
-- Backend: `supertonic say` (default, cold) → macOS `say` fallback. Warm `supertonic serve` is deferred (#138).
-- Plays through the default output device. Pure side effect; no return value.
+### `tts.py` — speech out (with output-device routing)
+- `speak(text: str, voice: str | None = None) -> None` — routes to `VOICE_OUTPUT_DEVICE` if set, else the system default.
+- `play_cue() -> bool` — the capture beep, routed the same way (so it's in-ear, not on the room speakers).
+- `list_devices() -> list[dict]` — normalized `[{index, name, input, output}]` for `voice devices`.
+- Default backend: `supertonic say` (cold) → macOS `say` fallback. Warm `supertonic serve` is deferred (#138).
+- **Output-device routing:** when `VOICE_OUTPUT_DEVICE` names an output device, `speak` synthesizes to a wav (`supertonic tts -o`) and plays it to that device via **sounddevice** (PortAudio); the cue plays a short generated tone the same way. Selection is by case-insensitive **name** (not a fixed index), so a Bluetooth device's index drift across reconnects is a non-issue. If routing is unavailable (sounddevice/numpy missing, device not found, synth/playback error) it **warns and falls back** to the default output — never silent. `say` cannot target a device, so routing requires supertonic.
 
 ### `capture.py` — microphone in
 - `record(mode: str = "vad", max_secs: int = 15, device: int = 1) -> str` (returns wav path).
@@ -55,11 +57,23 @@ A proof-of-concept already validates the full loop on the primary machine: `supe
 A thin wrapper over `core/voice` (console script and/or `python -m core.voice`):
 
 - `voice arm [--timeout 10m]` · `voice disarm` · `voice status`
+- `voice devices` — list input/output devices (find the name for `VOICE_OUTPUT_DEVICE`)
 - `voice say "<text>" [--voice F1]`
 - `voice menu --options '<json>' [--prompt "<intro>"] [--mode vad|ptt]` → prints the JSON `Action`
 - `voice listen [--mode vad|ptt]` → prints a free-form transcript
 
 `--options` JSON shape: `[{"id": "a", "label": "Clean it up", "say": "optional spoken phrasing"}, ...]` (1–4 items).
+
+**Device selection (env, mirroring the capture pattern):** `VOICE_OUTPUT_DEVICE` (TTS + cue output; name substring; unset = system default), `VOICE_VAD_DEVICE` (sox mic name; default "MacBook Pro Microphone"), `VOICE_PTT_DEVICE` (ffmpeg avfoundation index; default "1").
+
+## Audio device routing (headset / non-default output)
+
+For a discreet "in your ear" experience the agent's audio can be pinned to a specific device (e.g. a Bluetooth headset) independent of the system default:
+
+- **Input** (already supported): `VOICE_VAD_DEVICE` / `VOICE_PTT_DEVICE` point capture at the headset mic.
+- **Output:** `VOICE_OUTPUT_DEVICE` routes both speech and the cue to the headset via sounddevice; the system default output is untouched, so others don't hear it.
+- **Selection by name**, resolved through `sounddevice.query_devices()` to a current index each call — robust to Bluetooth reconnect index drift. Output-only match, so a headset's *mic* entry never shadows its speaker.
+- **Bluetooth HFP/A2DP caveat:** opening the headset *mic* forces macOS into the hands-free (HFP) profile → output becomes mono ~16 kHz "phone-call" quality. This is fine for a voice assistant (speech; whisper wants 16 kHz mono anyway), but you cannot get hi-fi stereo output while the mic is live. A hardware/OS constraint, not a bug.
 
 ## Data flow — the agent-owned loop
 
@@ -122,6 +136,7 @@ JSON Action returned to agent:
 
 ## Confirmed tooling (primary machine)
 
-- TTS: `supertonic` (`/opt/homebrew/bin/supertonic`), `say` fallback; playback `afplay`.
-- Recording: `ffmpeg` (avfoundation), mic = device **1**; `sox` to be installed for VAD.
+- TTS: `supertonic` (`/opt/homebrew/bin/supertonic`), `say` fallback; default playback `afplay`.
+- Output-device routing: `sounddevice` (PortAudio, bundled) + `numpy` — the `[voice]` extra (`pip install iterm-mcp[voice]`); plays the supertonic-synthesized wav / cue tone to the named device.
+- Recording: `ffmpeg` (avfoundation), mic = device **1**; `sox` for VAD (record-until-silence).
 - STT: `whisper-cli` 1.8.6 (`/opt/homebrew/bin/whisper-cli`) + `~/.cache/whisper/ggml-base.en.bin`.

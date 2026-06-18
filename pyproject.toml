@@ -27,6 +27,11 @@ otel = [
     "opentelemetry-exporter-otlp>=1.20.0",
     "opentelemetry-semantic-conventions>=0.41b0",
 ]
+# Voice output-device routing (e.g. a Bluetooth headset) — install with: pip install iterm-mcp[voice]
+voice = [
+    "sounddevice>=0.4",
+    "numpy>=1.21",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.1.0",

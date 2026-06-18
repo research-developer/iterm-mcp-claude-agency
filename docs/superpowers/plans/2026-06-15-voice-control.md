@@ -1067,3 +1067,28 @@ git commit -m "test(voice): env-gated live smoke test + README usage"
   Expected: all green, live test skipped.
 - [ ] Manual (optional, requires mic + `brew install sox`): `pip install -e . && voice arm && VOICE_TEST_LIVE=1 python -m unittest tests.test_voice_live -v`
 - [ ] Confirm no Python 3.9+ typing syntax slipped in: `grep -rn " | None\|: list\[\|: dict\[" core/voice` returns nothing.
+
+---
+
+## Addendum: output-device routing (Bluetooth / non-default output)
+
+Added after the original plan to satisfy the "have you in my ear" requirement — route TTS **and** the capture cue to a chosen output device (e.g. a Bluetooth headset), not just the system default. Implemented via TDD; all headless voice tests green.
+
+### Task A — `tts.py` output-device routing
+**Files:** `core/voice/tts.py`, `tests/test_voice_backends.py`
+- [x] `_output_device()` reads `VOICE_OUTPUT_DEVICE` (blank → None).
+- [x] `speak()` routes via `_speak_to_device()` when set, else `_speak_default()`; any routing failure warns and falls back (never silent).
+- [x] `_resolve_output_device(name)` → first OUTPUT device whose name contains `name` (case-insensitive) via `sounddevice.query_devices()`; input-only entries ignored.
+- [x] `_synthesize` (`supertonic tts -o`), `_read_wav` (wave + numpy int16), playback via `sounddevice.play(..., device=index)`, `_cleanup_wav`.
+- [x] `play_cue()` routes a generated tone to the device when set, else `afplay` default.
+- [x] `sounddevice`/`numpy` imported optionally (`_sd`/`_np` None when absent → graceful fallback).
+
+### Task B — `voice devices` + cue wiring
+**Files:** `core/voice/cli.py`, `core/voice/tts.py`, `tests/test_voice_cli.py`
+- [x] `tts.list_devices()` → `[{index, name, input, output}]` (empty without sounddevice).
+- [x] `voice devices` subcommand lists I/O devices, marks the active `VOICE_OUTPUT_DEVICE`.
+- [x] `cli._beep()` delegates to `tts.play_cue()` so the cue is in-ear, not on room speakers.
+
+### Task C — packaging + docs
+- [x] `[project.optional-dependencies] voice = ["sounddevice", "numpy"]` (`pip install iterm-mcp[voice]`).
+- [x] Spec + README updated: output routing, `voice devices`, `VOICE_OUTPUT_DEVICE`/`VOICE_VAD_DEVICE`/`VOICE_PTT_DEVICE`, Bluetooth HFP/A2DP caveat, name-based selection.

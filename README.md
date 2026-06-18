@@ -959,6 +959,15 @@ Usage: `voice arm` to permit capture (idle auto-disarms after 10 min),
 `voice disarm` to stop. The agent drives `voice menu --options '<json>'`
 and reads the JSON action. Nothing leaves the machine. Tracking: #138.
 
+**Headset / non-default device ("in your ear"):** `pip install iterm-mcp[voice]`
+(sounddevice + numpy), then `voice devices` to list devices and set
+`VOICE_OUTPUT_DEVICE="<name>"` (e.g. `AirPods`) to route TTS **and** the cue to
+that output — others don't hear it. The mic side uses `VOICE_VAD_DEVICE` /
+`VOICE_PTT_DEVICE`. Selection is by name (Bluetooth index drift is fine), and it
+falls back to the default output if the device is missing. Note the Bluetooth
+HFP/A2DP trade-off: using the headset mic drops output to mono ~16 kHz — fine
+for speech, but no hi-fi while the mic is live.
+
 ## License
 
 [MIT](LICENSE)
