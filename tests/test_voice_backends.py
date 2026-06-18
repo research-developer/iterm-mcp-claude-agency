@@ -289,8 +289,13 @@ class TestCue(unittest.TestCase):
         self.assertTrue(warn.called)
 
 
+@unittest.skipUnless(tts._np is not None, "numpy (the [voice] extra) not installed")
 class TestReadWav(unittest.TestCase):
-    """_read_wav handles real PCM wavs and rejects unsupported sample widths."""
+    """_read_wav handles real PCM wavs and rejects unsupported sample widths.
+
+    Skipped when numpy is absent (e.g. CI without the [voice] extra) — these
+    exercise the real numpy/wave path rather than mocks.
+    """
 
     @staticmethod
     def _write_wav(path, channels, sampwidth, rate, frames_bytes):
