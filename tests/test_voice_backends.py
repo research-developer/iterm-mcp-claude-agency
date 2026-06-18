@@ -205,6 +205,33 @@ class TestTTSRouting(unittest.TestCase):
         fake_sd.play.assert_called_once_with("DATA", 16000, device=0)
         fake_sd.wait.assert_called_once()
 
+    def test_speak_to_device_falls_back_when_read_raises(self):
+        fake_sd = mock.Mock()
+        fake_sd.query_devices.return_value = [
+            {"name": "AirPods", "max_input_channels": 0, "max_output_channels": 2},
+        ]
+        with mock.patch("core.voice.tts._sd", fake_sd), \
+             mock.patch("core.voice.tts._np", mock.Mock()), \
+             mock.patch("core.voice.tts._synthesize", return_value=True), \
+             mock.patch("core.voice.tts._read_wav", side_effect=ValueError("bad width")), \
+             mock.patch("core.voice.tts._cleanup_wav"), \
+             mock.patch("core.voice.tts.print"):
+            self.assertFalse(tts._speak_to_device("hi", "AirPods", None))
+
+    def test_speak_to_device_falls_back_when_play_raises(self):
+        fake_sd = mock.Mock()
+        fake_sd.query_devices.return_value = [
+            {"name": "AirPods", "max_input_channels": 0, "max_output_channels": 2},
+        ]
+        fake_sd.play.side_effect = RuntimeError("portaudio error")
+        with mock.patch("core.voice.tts._sd", fake_sd), \
+             mock.patch("core.voice.tts._np", mock.Mock()), \
+             mock.patch("core.voice.tts._synthesize", return_value=True), \
+             mock.patch("core.voice.tts._read_wav", return_value=("DATA", 16000)), \
+             mock.patch("core.voice.tts._cleanup_wav"), \
+             mock.patch("core.voice.tts.print"):
+            self.assertFalse(tts._speak_to_device("hi", "AirPods", None))
+
 
 class TestListDevices(unittest.TestCase):
     """tts.list_devices() normalizes sounddevice's table for `voice devices`."""
@@ -246,6 +273,71 @@ class TestCue(unittest.TestCase):
         self.assertTrue(ok)
         fake_sd.play.assert_called_once_with("TONE", 16000, device=3)
         run.assert_not_called()
+
+    def test_cue_falls_back_to_afplay_when_device_play_raises(self):
+        fake_sd = mock.Mock()
+        fake_sd.play.side_effect = RuntimeError("portaudio error")
+        with mock.patch("core.voice.tts._output_device", return_value="AirPods"), \
+             mock.patch("core.voice.tts._sd", fake_sd), \
+             mock.patch("core.voice.tts._np", mock.Mock()), \
+             mock.patch("core.voice.tts._resolve_output_device", return_value=3), \
+             mock.patch("core.voice.tts._cue_tone", return_value="TONE"), \
+             mock.patch("core.voice.tts.print") as warn, \
+             mock.patch("core.voice.tts.subprocess.run", return_value=_ok()) as run:
+            ok = tts.play_cue()
+        self.assertEqual(run.call_args[0][0][0], "afplay")  # fell back, not silent
+        self.assertTrue(warn.called)
+
+
+class TestReadWav(unittest.TestCase):
+    """_read_wav handles real PCM wavs and rejects unsupported sample widths."""
+
+    @staticmethod
+    def _write_wav(path, channels, sampwidth, rate, frames_bytes):
+        import wave
+        with wave.open(path, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sampwidth)
+            wf.setframerate(rate)
+            wf.writeframes(frames_bytes)
+
+    def test_reads_mono_int16(self):
+        import tempfile
+        import numpy as np
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            samples = np.array([0, 100, -100, 32767, -32768], dtype=np.int16)
+            self._write_wav(path, 1, 2, 16000, samples.tobytes())
+            data, rate = tts._read_wav(path)
+            self.assertEqual(rate, 16000)
+            self.assertEqual(list(data), list(samples))
+        finally:
+            os.remove(path)
+
+    def test_reads_stereo_reshapes_to_frames_by_channels(self):
+        import tempfile
+        import numpy as np
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            samples = np.array([1, 2, 3, 4, 5, 6], dtype=np.int16)  # 3 frames x 2ch
+            self._write_wav(path, 2, 2, 16000, samples.tobytes())
+            data, _ = tts._read_wav(path)
+            self.assertEqual(data.shape, (3, 2))
+        finally:
+            os.remove(path)
+
+    def test_unsupported_sampwidth_raises(self):
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            self._write_wav(path, 1, 3, 16000, b"\x00\x00\x00\x01\x02\x03")  # 24-bit
+            with self.assertRaises(ValueError):
+                tts._read_wav(path)
+        finally:
+            os.remove(path)
 
 
 if __name__ == "__main__":

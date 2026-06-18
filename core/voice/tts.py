@@ -97,6 +97,7 @@ def _speak_to_device(text: str, device: str, voice: Optional[str]) -> bool:
         print("voice: output device {!r} not found — using default output "
               "(run `voice devices` to list names).".format(device), file=sys.stderr)
         return False
+    _cleanup_wav()  # mirror capture.py: never let a prior turn's wav linger
     if not _synthesize(text, TTS_WAV_PATH, voice):
         return False
     try:
@@ -145,12 +146,22 @@ def _synthesize(text: str, wav_path: str, voice: Optional[str]) -> bool:
 
 
 def _read_wav(path: str) -> Tuple["_np.ndarray", int]:
-    """Read a PCM wav into an int16 numpy array + sample rate."""
+    """Read a PCM wav into a numpy array (matching its sample width) + rate.
+
+    The dtype is chosen from the wav's sample width so bytes are never
+    reinterpreted (a wrong dtype would play loud noise to the headset).
+    Unsupported widths raise ValueError, which `_speak_to_device` catches to fall
+    back to the default output rather than play garbage.
+    """
     with wave.open(path, "rb") as wf:
         rate = wf.getframerate()
         channels = wf.getnchannels()
+        width = wf.getsampwidth()
         frames = wf.readframes(wf.getnframes())
-    data = _np.frombuffer(frames, dtype=_np.int16)
+    dtype = {1: _np.uint8, 2: _np.int16, 4: _np.int32}.get(width)
+    if dtype is None:
+        raise ValueError("unsupported wav sample width: {} bytes".format(width))
+    data = _np.frombuffer(frames, dtype=dtype)
     if channels > 1:
         data = data.reshape(-1, channels)
     return data, rate
@@ -174,11 +185,14 @@ def play_cue() -> bool:
         index = _resolve_output_device(device)
         if index is not None:
             try:
+                # sounddevice infers dtype from the int16 ndarray.
                 _sd.play(_cue_tone(), CUE_RATE, device=index)
                 _sd.wait()
                 return True
-            except Exception:
-                pass  # fall through to afplay on the default output
+            except Exception as exc:
+                print("voice: cue to {!r} failed ({}) — using default output."
+                      .format(device, exc), file=sys.stderr)
+                # fall through to afplay on the default output
     result = subprocess.run(["afplay", CUE_PATH], check=False)
     return result.returncode == 0
 

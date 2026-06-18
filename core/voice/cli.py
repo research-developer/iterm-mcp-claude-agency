@@ -10,7 +10,6 @@ a structured `error`/`refused`, never a raw traceback the agent cannot parse.
 """
 import argparse
 import json
-import os
 import subprocess
 import sys
 from typing import List
@@ -61,7 +60,7 @@ def cmd_devices(args: argparse.Namespace) -> None:
         print("voice: sounddevice not available — `pip install sounddevice` to "
               "list/route audio devices.")
         return
-    current = os.environ.get("VOICE_OUTPUT_DEVICE", "").strip().lower()
+    current = (tts._output_device() or "").lower()
     print("Audio devices (set VOICE_OUTPUT_DEVICE to an output name to route TTS there):")
     for d in devices:
         io = "{}/{}".format("in" if d["input"] else "  ",
