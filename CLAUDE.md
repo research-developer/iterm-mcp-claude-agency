@@ -139,7 +139,7 @@ iterm-mcp/
 ├── iterm_mcpy/                   # MCP server package
 │   ├── __main__.py               # Entry point: `python -m iterm_mcpy` runs the shim
 │   ├── app_context.py            # Process-level state singleton (AppContext)
-│   ├── daemon.py                 # Singleton streamable-HTTP daemon (ports 12340-12349, /health)
+│   ├── daemon.py                 # Singleton streamable-HTTP daemon (ports 12340-12349 or pinned, /health)
 │   ├── shim.py                   # stdio<->HTTP shim (what clients spawn); auto-starts daemon
 │   ├── fastmcp_server.py         # Slim server: lifespan, resources, prompts, register_all()
 │   ├── helpers.py                # Shared helpers (resolve_session, execute_*)
@@ -319,6 +319,8 @@ schema.
 ### Running the Server
 
 Both Claude Code and Claude Desktop spawn the stdio shim (`iterm-mcp` / `python -m iterm_mcpy`). The shim discovers or auto-starts a shared singleton daemon over streamable HTTP on `127.0.0.1:12340-12349`; all clients share one iTerm2 connection and one agent/team registry (cross-client agent visibility). The daemon auto-starts on first client connect; its state is advertised in `~/.iterm-mcp/daemon.json`. The `/health` endpoint serves a version handshake and shims will restart version-stale daemons automatically.
+
+The daemon picks the first free port in `12340-12349` by default, but the port can be **pinned** so every daemon on the machine (manual *and* the shim's auto-spawn) uses it: set the `ITERM_MCP_PORT` env var (transient override) or persist `{"preferred_port": <port>}` in `~/.iterm-mcp/config.json` (survives restarts/auto-respawn). If the pinned port is occupied, the daemon warns and falls back to the range so it still starts and stays discoverable via the state file. Manage the persistent pin via `iterm_mcpy.daemon.set_preferred_port(<port>|None)`.
 
 ```bash
 iterm-mcp                # stdio shim (what Claude Code/Desktop spawn); auto-starts the shared daemon
