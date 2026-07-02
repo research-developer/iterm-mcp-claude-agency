@@ -140,6 +140,11 @@ def find_free_port() -> int:
     ]
     for port in candidates:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # Mirror uvicorn's bind semantics: it sets SO_REUSEADDR, so a port
+            # left in TIME_WAIT by a just-stopped daemon is still bindable by
+            # the server. Without this the probe spuriously rejects the pinned
+            # port right after a restart and drifts into the fallback range.
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 # The socket closes before we return; there is a small TOCTOU window
                 # between this probe and FastMCP's bind. Acceptable on loopback.
