@@ -19,7 +19,7 @@ from pathlib import Path
 
 import anyio
 
-from iterm_mcpy.daemon import STATE_DIR, package_version, read_state
+from iterm_mcpy.daemon import STATE_DIR, is_stale, read_state
 
 # Generous wait for a SIGTERM'd stale daemon to exit; it may need to flush state.
 _SIGTERM_WAIT = 5.0
@@ -77,9 +77,9 @@ def ensure_daemon(spawn_timeout: float = 20.0, poll_interval: float = 0.25) -> d
     state = read_state()
     health = probe_health(state) if state else None
 
-    if health and health.get("version") == package_version():
+    if health and not is_stale(health.get("version"), health.get("version_source")):
         return state
-    if health:  # alive but stale version: restart so behavior matches this code
+    if health:  # confidently stale (git-vs-git mismatch): restart to match this code
         terminate_daemon(health["pid"])
         deadline = time.monotonic() + _SIGTERM_WAIT
         while time.monotonic() < deadline and probe_health(state):
@@ -89,7 +89,7 @@ def ensure_daemon(spawn_timeout: float = 20.0, poll_interval: float = 0.25) -> d
         # Another shim may have spawned while we waited on the lock.
         state = read_state()
         health = probe_health(state) if state else None
-        if health and health.get("version") == package_version():
+        if health and not is_stale(health.get("version"), health.get("version_source")):
             return state
         spawn_daemon()
         deadline = time.monotonic() + spawn_timeout

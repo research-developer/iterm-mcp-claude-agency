@@ -97,10 +97,11 @@ async def oauth_protected_resource_mcp_metadata(request: Request) -> JSONRespons
 @mcp.custom_route("/health", methods=["GET"])
 async def health(request: Request) -> JSONResponse:
     """Liveness + version handshake endpoint for the shim."""
-    from iterm_mcpy.daemon import package_version
+    from iterm_mcpy.daemon import package_version, version_source
     return JSONResponse({
         "status": "ok",
         "version": package_version(),
+        "version_source": version_source(),
         "pid": os.getpid(),
     })
 
