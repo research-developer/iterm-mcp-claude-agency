@@ -29,6 +29,14 @@ def main() -> None:
     p_install.add_argument("--code", action="store_true",
                            help="print the 'claude mcp add' command for Claude Code")
 
+    p_project = sub.add_parser("project", help="declare/inspect a session's project")
+    p_project_sub = p_project.add_subparsers(dest="project_command")
+    p_pset = p_project_sub.add_parser("set", help="declare the repo you're working on")
+    p_pset.add_argument("repo")
+    p_pset.add_argument("--session-id", default=None)
+    p_pget = p_project_sub.add_parser("get", help="show this session's declared project")
+    p_pget.add_argument("--session-id", default=None)
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -46,6 +54,14 @@ def main() -> None:
         _stop()
     elif args.command == "install":
         _install(desktop=args.desktop, code=args.code)
+    elif args.command == "project":
+        from iterm_mcpy import project_cli
+        if args.project_command == "set":
+            project_cli.cmd_set(args.repo, session_id=args.session_id)
+        elif args.project_command == "get":
+            project_cli.cmd_get(session_id=args.session_id)
+        else:
+            parser.parse_args(["project", "--help"])
 
 
 def _status() -> None:

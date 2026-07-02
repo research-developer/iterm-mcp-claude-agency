@@ -1108,5 +1108,46 @@ class TestOptionsAdvertises4e(unittest.TestCase):
             self.assertIn(name, subs)
 
 
+class TestSessionsProjectFilter(unittest.TestCase):
+    def _session(self, sid):
+        s = MagicMock()
+        s.id = sid
+        s.name = sid
+        s.persistent_id = None
+        s.is_processing = False
+        s.is_suspended = False
+        s.suspended_at = None
+        s.suspended_by = None
+        s.last_update_time = None
+        s.get_cwd = AsyncMock(return_value="/x")
+        s.get_screen_contents = AsyncMock(return_value="")
+        return s
+
+    def test_filters_by_project(self):
+        from iterm_mcpy.tools.sessions import sessions
+        terminal = MagicMock()
+        terminal.sessions = {"a": self._session("a"), "b": self._session("b")}
+        reg = MagicMock(); reg.get_agent_by_session = MagicMock(return_value=None)
+        ctx = _make_ctx(terminal=terminal, agent_registry=reg)
+        async def fake_proj(conn, sid):
+            return "/repoA" if sid == "a" else "/repoB"
+        with patch("iterm_mcpy.tools.sessions.get_session_project", new=fake_proj):
+            parsed = asyncio.run(sessions(ctx=ctx, op="GET", project="/repoA"))
+        ids = [s["session_id"] for s in parsed["data"]]
+        self.assertEqual(ids, ["a"])
+
+    def test_unfiltered_list_does_not_resolve_project(self):
+        from iterm_mcpy.tools.sessions import sessions
+        terminal = MagicMock()
+        terminal.sessions = {"a": self._session("a")}
+        reg = MagicMock(); reg.get_agent_by_session = MagicMock(return_value=None)
+        ctx = _make_ctx(terminal=terminal, agent_registry=reg)
+        gsp = AsyncMock(return_value="/repoA")
+        with patch("iterm_mcpy.tools.sessions.get_session_project", new=gsp):
+            parsed = asyncio.run(sessions(ctx=ctx, op="GET"))  # no project filter
+        gsp.assert_not_awaited()
+        self.assertIsNone(parsed["data"][0].get("project"))
+
+
 if __name__ == "__main__":
     unittest.main()

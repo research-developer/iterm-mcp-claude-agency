@@ -58,6 +58,11 @@ class TestCliRouting(unittest.TestCase):
         self.assertIn("claude mcp add", printed)
         self.assertIn("-m iterm_mcpy", printed)
 
+    def test_project_set_routes_to_cmd_set(self):
+        with mock.patch("iterm_mcpy.project_cli.cmd_set") as cset:
+            self._run(["project", "set", "/Users/me/repoA"])
+        cset.assert_called_once_with("/Users/me/repoA", session_id=None)
+
 
 if __name__ == "__main__":
     unittest.main()

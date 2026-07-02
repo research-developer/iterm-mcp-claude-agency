@@ -57,6 +57,7 @@ from core.models import (
     SplitSessionResponse,
     WriteToSessionsRequest,
 )
+from core.projects import get_session_project
 from core.roles import RoleManager
 from core.session import ItermSession
 from core.tags import FocusCooldownManager
@@ -140,6 +141,7 @@ async def _list_sessions_core(
     role: Optional[str] = None,
     include_message: bool = True,
     force_enrich: bool = True,
+    project: Optional[str] = None,
 ) -> ListSessionsResponse:
     """Core listing/filtering pipeline backing the sessions GET handler.
 
@@ -243,6 +245,13 @@ async def _list_sessions_core(
         if team is not None and (agent_obj is None or team not in (agent_obj.teams or [])):
             continue
 
+        # Resolve the project only when filtering — avoids mutating/slowing plain lists.
+        session_project: Optional[str] = None
+        if project is not None:
+            session_project = await get_session_project(terminal.connection, session.id)
+            if session_project != project:
+                continue
+
         # Apply role filter.
         if role_session_ids is not None and session.id not in role_session_ids:
             continue
@@ -334,6 +343,7 @@ async def _list_sessions_core(
             last_activity=last_activity_dt,
             last_message=last_message,
             process_name=process_name,
+            project=session_project,
         )
         result.append(session_info)
 
@@ -734,6 +744,7 @@ _GET_CORE_PARAMS = {
     "team",
     "role",
     "include_message",
+    "project",
 }
 
 
@@ -1581,6 +1592,7 @@ async def sessions(
     agent: Optional[str] = None,
     team: Optional[str] = None,
     role: Optional[str] = None,
+    project: Optional[str] = None,
     tag: Optional[str] = None,
     tags: Optional[List[str]] = None,
     match: str = "any",
@@ -1677,6 +1689,7 @@ async def sessions(
         "agent": agent,
         "team": team,
         "role": role,
+        "project": project,
         "tag": tag,
         "tags": tags,
         "match": match,
