@@ -4,10 +4,12 @@ One daemon per machine. State (port/pid/version) is advertised in
 ~/.iterm-mcp/daemon.json so shims can discover or spawn it.
 """
 
+import functools
 import json
 import os
 import signal
 import socket
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,14 +18,62 @@ from typing import Optional
 STATE_DIR = Path("~/.iterm-mcp").expanduser()
 CONFIG_PATH = STATE_DIR / "config.json"  # persistent, survives `stop`/restart
 PORT_RANGE = range(12340, 12350)  # documented range, kept from the old attempt
+_REPO_ROOT = Path(__file__).resolve().parent.parent  # dir containing .git
 
 
-def package_version() -> str:
+def _base_version() -> str:
+    """The ``major.minor`` prefix, from installed package metadata.
+
+    The pyproject patch digit is intentionally ignored — the patch is
+    derived from git (see package_version). Falls back to "0.1" when
+    metadata is unreadable.
+    """
     try:
         from importlib.metadata import version
-        return version("iterm-mcp")
+        parts = version("iterm-mcp").split(".")
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            return f"{parts[0]}.{parts[1]}"
     except Exception:
-        return "0.0.0+dev"
+        pass
+    return "0.1"
+
+
+def _commit_count() -> Optional[str]:
+    """`git rev-list --count HEAD` against this checkout, or None if no git.
+
+    Pinned to _REPO_ROOT (not cwd) so the daemon and shim — which may run
+    from different working directories — compute the same value.
+    """
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=str(_REPO_ROOT), stderr=subprocess.DEVNULL, text=True,
+        ).strip()
+        return out if out.isdigit() else None
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+@functools.lru_cache(maxsize=1)
+def package_version() -> str:
+    """Auto-derived ``x.y.z``: ``major.minor`` + git commit count as patch.
+
+    Frozen per process via lru_cache: the daemon reports the code it
+    started with, while a freshly spawned shim computes the *current*
+    checkout. A new commit therefore makes the two differ, so the shim's
+    /health version handshake detects the stale daemon and restarts it —
+    no manual version bump required. Degrades to the static installed
+    metadata version when git is unavailable (e.g. a wheel install), where
+    daemon and shim still agree because both degrade identically.
+    """
+    count = _commit_count()
+    if count is None:
+        try:
+            from importlib.metadata import version
+            return version("iterm-mcp")
+        except Exception:
+            return "0.0.0+dev"
+    return f"{_base_version()}.{count}"
 
 
 def preferred_port() -> Optional[int]:
