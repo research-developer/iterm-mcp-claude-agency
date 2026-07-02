@@ -49,7 +49,16 @@ class PreferredPortTests(unittest.TestCase):
         daemon.os.environ["ITERM_MCP_PORT"] = "23456"
         self.assertEqual(daemon.preferred_port(), 23456)
 
-    def test_invalid_env_falls_through_to_none(self):
+    def test_invalid_env_falls_through_to_config(self):
+        # An empty/junk env var (e.g. `export ITERM_MCP_PORT=`) must not
+        # silently disable a valid persisted pin.
+        self._write_cfg({"preferred_port": 12345})
+        for bad in ("", "not-a-port", "99999"):
+            with self.subTest(bad=bad):
+                daemon.os.environ["ITERM_MCP_PORT"] = bad
+                self.assertEqual(daemon.preferred_port(), 12345)
+
+    def test_invalid_env_and_no_config_is_none(self):
         daemon.os.environ["ITERM_MCP_PORT"] = "not-a-port"
         self.assertIsNone(daemon.preferred_port())
 
@@ -68,7 +77,14 @@ class PreferredPortTests(unittest.TestCase):
 
 class FindFreePortTests(unittest.TestCase):
     def setUp(self):
-        self._patchers = [mock.patch.dict(daemon.os.environ, {}, clear=False)]
+        # Isolate CONFIG_PATH to an empty temp file so preferred_port() can't
+        # pick up the developer's real ~/.iterm-mcp/config.json pin.
+        self._tmp = TemporaryDirectory()
+        self._patchers = [
+            mock.patch.object(daemon, "CONFIG_PATH",
+                              Path(self._tmp.name) / "config.json"),
+            mock.patch.dict(daemon.os.environ, {}, clear=False),
+        ]
         for p in self._patchers:
             p.start()
         daemon.os.environ.pop("ITERM_MCP_PORT", None)
@@ -76,6 +92,7 @@ class FindFreePortTests(unittest.TestCase):
     def tearDown(self):
         for p in self._patchers:
             p.stop()
+        self._tmp.cleanup()
 
     def test_returns_pinned_port_when_free(self):
         # Reserve then release an ephemeral port so we know it's bindable.
@@ -96,6 +113,48 @@ class FindFreePortTests(unittest.TestCase):
             chosen = daemon.find_free_port()
         self.assertIn(chosen, daemon.PORT_RANGE)
         self.assertNotEqual(chosen, busy_port)
+
+
+class SetPreferredPortTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.cfg = Path(self._tmp.name) / "config.json"
+        self._patchers = [
+            mock.patch.object(daemon, "CONFIG_PATH", self.cfg),
+            mock.patch.object(daemon, "STATE_DIR", Path(self._tmp.name)),
+            mock.patch.dict(daemon.os.environ, {}, clear=False),
+        ]
+        for p in self._patchers:
+            p.start()
+        daemon.os.environ.pop("ITERM_MCP_PORT", None)
+
+    def tearDown(self):
+        for p in self._patchers:
+            p.stop()
+        self._tmp.cleanup()
+
+    def test_round_trip_set_then_read(self):
+        daemon.set_preferred_port(12345)
+        self.assertEqual(daemon.preferred_port(), 12345)
+        self.assertEqual(json.loads(self.cfg.read_text())["preferred_port"], 12345)
+
+    def test_clear_with_none_removes_pin(self):
+        daemon.set_preferred_port(12345)
+        daemon.set_preferred_port(None)
+        self.assertIsNone(daemon.preferred_port())
+        self.assertNotIn("preferred_port", json.loads(self.cfg.read_text()))
+
+    def test_preserves_unrelated_keys(self):
+        self.cfg.write_text(json.dumps({"other": "keep-me"}))
+        daemon.set_preferred_port(12345)
+        cfg = json.loads(self.cfg.read_text())
+        self.assertEqual(cfg["other"], "keep-me")
+        self.assertEqual(cfg["preferred_port"], 12345)
+
+    def test_no_temp_file_left_behind(self):
+        daemon.set_preferred_port(12345)
+        leftovers = [p.name for p in Path(self._tmp.name).glob("*.tmp")]
+        self.assertEqual(leftovers, [])
 
 
 if __name__ == "__main__":
