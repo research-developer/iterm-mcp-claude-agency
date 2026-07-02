@@ -93,3 +93,6 @@ com.iterm-mcp.daemon.plist
 
 # Local iTerm configuration
 .iterm/
+
+# Downloaded sample scripts (regenerated on demand; never committed)
+scripts/iterm2_samples/
