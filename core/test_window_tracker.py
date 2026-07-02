@@ -42,6 +42,7 @@ if it missed the profile.
 import json
 import os
 import re
+import subprocess
 import uuid
 import logging
 from pathlib import Path
@@ -260,6 +261,90 @@ async def close_tagged_sessions(
 
     log.info("close_tagged_sessions: closed %d session(s) for tag=%s", closed, tag)
     return closed
+
+
+# ---------------------------------------------------------------------------
+# Active-iTerm guard — keep live tests from opening windows while iTerm2 is
+# the frontmost app, so they never interrupt an interactive session.
+# ---------------------------------------------------------------------------
+
+#: macOS bundle identifier for iTerm2.
+ITERM_BUNDLE_ID = "com.googlecode.iterm2"
+
+#: Env var to force live window-opening tests to run even when iTerm2 is active.
+ALLOW_ACTIVE_ENV = "ITERM_MCP_TEST_ALLOW_ACTIVE"
+
+
+def iterm_frontmost_state() -> Optional[bool]:
+    """Best-effort check of whether iTerm2 is the frontmost macOS app.
+
+    Read-only and side-effect free — never opens a window.
+
+    Returns:
+        ``True`` if iTerm2 is frontmost, ``False`` if another app is, or
+        ``None`` if it could not be determined (no GUI session, missing
+        tooling, permission denied, etc.).
+    """
+    # Prefer pyobjc/AppKit if available (in-process, no subprocess).
+    try:
+        from AppKit import NSWorkspace  # type: ignore
+
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if app is not None:
+            return app.bundleIdentifier() == ITERM_BUNDLE_ID
+    except Exception:  # noqa: BLE001 — AppKit not installed, no GUI, etc.
+        pass
+
+    # Fall back to osascript (always present on macOS).
+    try:
+        result = subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'tell application "System Events" to get bundle identifier of '
+                "first application process whose frontmost is true",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip() == ITERM_BUNDLE_ID
+    except Exception:  # noqa: BLE001
+        pass
+
+    return None  # undetermined
+
+
+def skip_reason_if_iterm_active() -> Optional[str]:
+    """Return a ``skipTest`` reason if live window tests should not run now.
+
+    Live tests open real iTerm2 windows.  To avoid disrupting an interactive
+    session, they are skipped when iTerm2 is the frontmost app — and, to be
+    safe, also when the frontmost app cannot be determined.  Set the
+    ``ITERM_MCP_TEST_ALLOW_ACTIVE`` env var (``1``/``true``/``yes``/``on``) to
+    override and always run them.
+
+    Returns:
+        A human-readable reason string when the test should be skipped, or
+        ``None`` when it is safe to open windows (iTerm2 is in the background).
+    """
+    override = os.environ.get(ALLOW_ACTIVE_ENV, "").strip().lower()
+    if override in ("1", "true", "yes", "on"):
+        return None
+
+    state = iterm_frontmost_state()
+    if state is True:
+        return (
+            "iTerm2 is the frontmost app — skipping live window-opening test to "
+            f"avoid disrupting the session (set {ALLOW_ACTIVE_ENV}=1 to run anyway)."
+        )
+    if state is None:
+        return (
+            "Could not determine the frontmost app — skipping live window-opening "
+            f"test to be safe (set {ALLOW_ACTIVE_ENV}=1 to run anyway)."
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
