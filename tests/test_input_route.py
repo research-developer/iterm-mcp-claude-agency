@@ -8,7 +8,7 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
@@ -92,6 +92,25 @@ class TestValidation(unittest.IsolatedAsyncioTestCase):
             writer, FakeReader(b"not json"), {"content-length": "8"}
         )
         self.assertEqual(writer.status, 400)
+
+    async def test_non_object_json_400(self):
+        """Valid JSON that is not an object must 400, not AttributeError."""
+        server = make_server()
+        writer = FakeWriter()
+        body = b"[1, 2, 3]"
+        await server._handle_input(
+            writer, FakeReader(body), {"content-length": str(len(body))}
+        )
+        self.assertEqual(writer.status, 400)
+
+    async def test_oversize_body_413(self):
+        """Content-Length beyond MAX_BODY_SIZE is rejected before any read."""
+        server = make_server()
+        writer = FakeWriter()
+        await server._handle_input(
+            writer, FakeReader(b""), {"content-length": "5000"}
+        )
+        self.assertEqual(writer.status, 413)
 
 
 class TestTilesRouting(unittest.IsolatedAsyncioTestCase):
@@ -213,6 +232,22 @@ class TestWindowCycle(unittest.IsolatedAsyncioTestCase):
 
 
 class TestTerminalErrorsDrop(unittest.IsolatedAsyncioTestCase):
+    async def test_driver_store_exception_drops_with_valid_level(self):
+        """pending_questions() raising before level is set must still 200.
+
+        Regression: the store check runs before the tiles branch assigns
+        level; an exception there must not leave level unbound.
+        """
+        server = make_server()
+        store = Mock()
+        store.pending_questions = Mock(side_effect=RuntimeError("store broken"))
+        server._get_driver_store = Mock(return_value=store)
+
+        writer = await call(server, {"action": "select", "modifier": False})
+
+        self.assertEqual(writer.status, 200)
+        self.assertEqual(writer.json, {"status": "dropped", "level": "tui"})
+
     async def test_terminal_exception_drops_not_500(self):
         terminal = AsyncMock()
         terminal.get_active_session = AsyncMock(

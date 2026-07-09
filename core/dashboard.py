@@ -861,6 +861,11 @@ class DashboardServer:
             await self._send_response(writer, 400, "application/json", body)
             return
 
+        if not isinstance(data, dict):
+            body = json.dumps({"error": "Request body must be a JSON object"}).encode()
+            await self._send_response(writer, 400, "application/json", body)
+            return
+
         action = data.get("action")
         modifier = bool(data.get("modifier", False))
         if action not in self.INPUT_ACTIONS:
@@ -871,6 +876,10 @@ class DashboardServer:
             return
 
         status = "ok"
+        # Contract-valid default: the tiles branch checks the driver store
+        # before assigning level, so an exception there would otherwise
+        # leave level unbound on the except path.
+        level = "tui"
         try:
             if action == "window_cycle":
                 level = "window"
