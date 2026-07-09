@@ -32,6 +32,10 @@ voice = [
     "sounddevice>=0.4",
     "numpy>=1.21",
 ]
+# XP-Pen / macro-pad remote input — install with: pip install iterm-mcp[remote]
+remote = [
+    "pynput>=1.7",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.1.0",
@@ -43,6 +47,7 @@ dev = [
 [project.scripts]
 iterm-mcp = "iterm_mcpy.main:main"
 voice = "core.voice.cli:main"
+iterm-mcp-input-listener = "core.input_listener:main"
 
 [tool.setuptools]
 package-dir = {"" = "."}

@@ -156,5 +156,145 @@ class TestMalformedEvents(unittest.TestCase):
         )
 
 
+class TestNormalizeKey(unittest.TestCase):
+    """pynput key objects normalize to lowercase names."""
+
+    def test_named_key(self):
+        from core.input_listener import normalize_key
+
+        class FakeKey:
+            name = "f13"
+
+        self.assertEqual(normalize_key(FakeKey()), "f13")
+
+    def test_uppercase_name_lowercased(self):
+        from core.input_listener import normalize_key
+
+        class FakeKey:
+            name = "F14"
+
+        self.assertEqual(normalize_key(FakeKey()), "f14")
+
+    def test_character_key_returns_none(self):
+        from core.input_listener import normalize_key
+
+        class FakeKeyCode:  # pynput KeyCode has .char, no .name
+            char = "a"
+
+        self.assertIsNone(normalize_key(FakeKeyCode()))
+
+    def test_none_returns_none(self):
+        from core.input_listener import normalize_key
+
+        self.assertIsNone(normalize_key(None))
+
+
+class TestBackoff(unittest.TestCase):
+    """Failures gate posting with capped exponential backoff."""
+
+    def test_attempts_allowed_initially(self):
+        from core.input_listener import Backoff
+
+        b = Backoff()
+        self.assertTrue(b.should_attempt(now=100.0))
+
+    def test_failure_blocks_until_delay_elapses(self):
+        from core.input_listener import Backoff
+
+        b = Backoff(base=1.0, cap=30.0)
+        b.record_failure(now=100.0)
+        self.assertFalse(b.should_attempt(now=100.5))
+        self.assertTrue(b.should_attempt(now=101.1))
+
+    def test_consecutive_failures_double_delay_up_to_cap(self):
+        from core.input_listener import Backoff
+
+        b = Backoff(base=1.0, cap=4.0)
+        b.record_failure(now=100.0)   # delay 1s
+        b.record_failure(now=101.0)   # delay 2s
+        b.record_failure(now=103.0)   # delay 4s
+        b.record_failure(now=107.0)   # delay capped at 4s
+        self.assertFalse(b.should_attempt(now=110.9))
+        self.assertTrue(b.should_attempt(now=111.1))
+
+    def test_success_resets(self):
+        from core.input_listener import Backoff
+
+        b = Backoff(base=1.0, cap=30.0)
+        b.record_failure(now=100.0)
+        b.record_success()
+        self.assertTrue(b.should_attempt(now=100.1))
+
+
+class TestPostAction(unittest.TestCase):
+    """post_action never raises; returns False when the daemon is down."""
+
+    def test_unreachable_url_returns_false(self):
+        from core.input_listener import post_action
+
+        # Port 1 on localhost is never listening.
+        ok = post_action(
+            "http://127.0.0.1:1/api/input",
+            {"action": "select", "modifier": False},
+            timeout=0.2,
+        )
+        self.assertFalse(ok)
+
+    def test_posts_json_to_live_server(self):
+        import http.server
+        import json
+        import threading
+
+        from core.input_listener import post_action
+
+        received = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                received.update(json.loads(self.rfile.read(length)))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = "http://127.0.0.1:%d/api/input" % server.server_port
+            ok = post_action(url, {"action": "move_next", "modifier": True})
+        finally:
+            server.shutdown()
+        self.assertTrue(ok)
+        self.assertEqual(
+            received, {"action": "move_next", "modifier": True}
+        )
+
+
+class TestMainWithoutPynput(unittest.TestCase):
+    """main() exits with a clear message when pynput is missing."""
+
+    def test_missing_pynput_exits_2(self):
+        import builtins
+        import unittest.mock as mock
+
+        from core.input_listener import main
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name.startswith("pynput"):
+                raise ImportError("No module named 'pynput'")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch.object(builtins, "__import__", fake_import):
+            exit_code = main(["--url", "http://127.0.0.1:1"])
+        self.assertEqual(exit_code, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
