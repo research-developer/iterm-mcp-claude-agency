@@ -299,6 +299,8 @@ class DashboardServer:
                 await self._handle_ask(writer, reader, headers)
             elif url_path == "/api/answer":
                 await self._handle_answer(writer, reader, headers)
+            elif url_path == "/api/input":
+                await self._handle_input(writer, reader, headers)
             # Database API routes
             elif url_path == "/api/db/responses":
                 await self._handle_db_responses(writer, query_params, reader, headers)
@@ -808,6 +810,102 @@ class DashboardServer:
         body = json.dumps({"success": True}).encode()
         await self._send_response(writer, 200, "application/json", body)
         logger.info(f"[driver] Answer received: id={question_id} choice={choice_id}")
+
+    # Actions accepted by POST /api/input (XP-Pen remote / any macro pad).
+    INPUT_ACTIONS = {"move_prev", "move_next", "select", "cancel", "window_cycle"}
+    # tui-level action → send_special_key name.
+    TUI_KEYS = {
+        "move_prev": "up",
+        "move_next": "down",
+        "select": "enter",
+        "cancel": "escape",
+    }
+
+    async def _handle_input(
+        self,
+        writer: asyncio.StreamWriter,
+        reader: asyncio.StreamReader,
+        headers: Dict[str, str],
+    ) -> None:
+        """Handle POST /api/input — focus-independent remote actions.
+
+        The listener process (core/input_listener.py) cannot see driver
+        state, so it sends only {"action", "modifier"}; this handler
+        resolves the effective level: modifier ⇒ panes, else tiles if a
+        question is pending, else tui. See the XP-Pen design spec.
+
+        Request body (JSON):
+            action (str): move_prev|move_next|select|cancel|window_cycle
+            modifier (bool, optional): True while the modifier key is held.
+
+        Response (JSON, always 200 once validated):
+            {"status": "ok"|"dropped", "level": "tiles"|"tui"|"panes"|"window"}
+        """
+        MAX_BODY_SIZE = 4 * 1024
+
+        content_length = int(headers.get("content-length", 0))
+        if content_length > MAX_BODY_SIZE:
+            body = json.dumps({"error": "Request body too large"}).encode()
+            await self._send_response(writer, 413, "application/json", body)
+            return
+        if content_length <= 0:
+            body = json.dumps({"error": "Missing request body"}).encode()
+            await self._send_response(writer, 400, "application/json", body)
+            return
+
+        raw = await reader.read(content_length)
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            body = json.dumps({"error": f"Invalid JSON: {exc}"}).encode()
+            await self._send_response(writer, 400, "application/json", body)
+            return
+
+        action = data.get("action")
+        modifier = bool(data.get("modifier", False))
+        if action not in self.INPUT_ACTIONS:
+            body = json.dumps(
+                {"error": f"action must be one of {sorted(self.INPUT_ACTIONS)}"}
+            ).encode()
+            await self._send_response(writer, 400, "application/json", body)
+            return
+
+        status = "ok"
+        try:
+            if action == "window_cycle":
+                level = "window"
+                if not await self.terminal.cycle_window(1):
+                    status = "dropped"
+            elif modifier:
+                level = "panes"
+                if action == "move_prev":
+                    status = "ok" if await self.terminal.focus_relative_pane(-1) else "dropped"
+                elif action == "move_next":
+                    status = "ok" if await self.terminal.focus_relative_pane(1) else "dropped"
+                # select/cancel at the panes level are v1 no-ops.
+            elif self._get_driver_store().pending_questions():
+                level = "tiles"
+                await self._broadcast_named_event(
+                    "action", {"action": action, "level": "tiles"}
+                )
+            else:
+                level = "tui"
+                session = await self.terminal.get_active_session()
+                if session is None:
+                    status = "dropped"
+                    await self._broadcast_named_event(
+                        "notice", {"message": "No active iTerm session"}
+                    )
+                else:
+                    await session.send_special_key(self.TUI_KEYS[action])
+        except Exception as exc:
+            # A lost iTerm connection must not 500 the remote's tight loop.
+            logger.warning(f"[input] action {action} failed: {exc}")
+            status = "dropped"
+
+        body = json.dumps({"status": status, "level": level}).encode()
+        await self._send_response(writer, 200, "application/json", body)
+        logger.info(f"[input] action={action} level={level} status={status}")
 
     async def _send_response(
         self,
