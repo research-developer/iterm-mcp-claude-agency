@@ -25,6 +25,7 @@
   const customSubmit     = document.getElementById("custom-submit");
   const waitingIndicator = document.getElementById("waiting-indicator");
   const toastContainer   = document.getElementById("toast-container");
+  const levelIndicator   = document.getElementById("level-indicator");
 
   // ── State ────────────────────────────────────────────────────────────────
 
@@ -293,6 +294,11 @@
     }, 3000);
   }
 
+  function showLevel(level) {
+    levelIndicator.textContent = level;
+    levelIndicator.classList.add("visible");
+  }
+
   // ── SSE connection ───────────────────────────────────────────────────────
 
   let evtSource = null;
@@ -338,6 +344,29 @@
       if (currentQuestion && currentQuestion.id === data.id) {
         clearQuestion();
       }
+    });
+
+    // Named event: a remote (XP-Pen) action routed to the tiles level.
+    evtSource.addEventListener("action", function (e) {
+      let data;
+      try {
+        data = JSON.parse(e.data);
+      } catch (err) {
+        return;
+      }
+      showLevel(data.level || "tiles");
+      applyGamepadAction(data.action);
+    });
+
+    // Named event: server-side notice worth surfacing (dropped actions).
+    evtSource.addEventListener("notice", function (e) {
+      let data;
+      try {
+        data = JSON.parse(e.data);
+      } catch (err) {
+        return;
+      }
+      if (data.message) showToast(data.message);
     });
 
     // Unnamed data events (existing dashboard state broadcasts) — ignored
