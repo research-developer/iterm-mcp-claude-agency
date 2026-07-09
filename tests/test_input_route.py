@@ -122,8 +122,11 @@ class TestTilesRouting(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(writer.status, 200)
         self.assertEqual(writer.json, {"status": "ok", "level": "tiles"})
-        server._broadcast_named_event.assert_awaited_once_with(
+        server._broadcast_named_event.assert_any_await(
             "action", {"action": "move_next", "level": "tiles"}
+        )
+        server._broadcast_named_event.assert_any_await(
+            "level", {"level": "tiles", "status": "ok"}
         )
 
 
@@ -169,8 +172,11 @@ class TestTuiRouting(unittest.IsolatedAsyncioTestCase):
         writer = await call(server, {"action": "select", "modifier": False})
 
         self.assertEqual(writer.json, {"status": "dropped", "level": "tui"})
-        server._broadcast_named_event.assert_awaited_once_with(
+        server._broadcast_named_event.assert_any_await(
             "notice", {"message": "No active iTerm session"}
+        )
+        server._broadcast_named_event.assert_any_await(
+            "level", {"level": "tui", "status": "dropped"}
         )
 
 
@@ -205,6 +211,30 @@ class TestPanesRouting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(writer.json, {"status": "ok", "level": "panes"})
         terminal.focus_relative_pane.assert_not_awaited()
 
+    async def test_modifier_move_next_drop_toasts(self):
+        terminal = AsyncMock()
+        terminal.focus_relative_pane = AsyncMock(return_value=False)
+        server = make_server(terminal=terminal)
+
+        writer = await call(server, {"action": "move_next", "modifier": True})
+
+        self.assertEqual(writer.json, {"status": "dropped", "level": "panes"})
+        server._broadcast_named_event.assert_any_await(
+            "notice", {"message": "No pane to focus"}
+        )
+
+    async def test_modifier_move_prev_drop_toasts(self):
+        terminal = AsyncMock()
+        terminal.focus_relative_pane = AsyncMock(return_value=False)
+        server = make_server(terminal=terminal)
+
+        writer = await call(server, {"action": "move_prev", "modifier": True})
+
+        self.assertEqual(writer.json, {"status": "dropped", "level": "panes"})
+        server._broadcast_named_event.assert_any_await(
+            "notice", {"message": "No pane to focus"}
+        )
+
 
 class TestWindowCycle(unittest.IsolatedAsyncioTestCase):
     async def test_window_cycle_activates_next_window(self):
@@ -218,6 +248,9 @@ class TestWindowCycle(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(writer.json, {"status": "ok", "level": "window"})
         terminal.cycle_window.assert_awaited_once_with(1)
+        server._broadcast_named_event.assert_any_await(
+            "level", {"level": "window", "status": "ok"}
+        )
 
     async def test_window_cycle_failure_reports_dropped(self):
         terminal = AsyncMock()

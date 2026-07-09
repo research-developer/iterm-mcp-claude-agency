@@ -840,6 +840,9 @@ class DashboardServer:
 
         Response (JSON, always 200 once validated):
             {"status": "ok"|"dropped", "level": "tiles"|"tui"|"panes"|"window"}
+
+        Also broadcasts a "level" SSE event ({"level", "status"}) on every
+        validated request, so driver pages always know the resolved level.
         """
         MAX_BODY_SIZE = 4 * 1024
 
@@ -889,8 +892,16 @@ class DashboardServer:
                 level = "panes"
                 if action == "move_prev":
                     status = "ok" if await self.terminal.focus_relative_pane(-1) else "dropped"
+                    if status == "dropped":
+                        await self._broadcast_named_event(
+                            "notice", {"message": "No pane to focus"}
+                        )
                 elif action == "move_next":
                     status = "ok" if await self.terminal.focus_relative_pane(1) else "dropped"
+                    if status == "dropped":
+                        await self._broadcast_named_event(
+                            "notice", {"message": "No pane to focus"}
+                        )
                 # select/cancel at the panes level are v1 no-ops.
             elif self._get_driver_store().pending_questions():
                 level = "tiles"
@@ -911,6 +922,10 @@ class DashboardServer:
             # A lost iTerm connection must not 500 the remote's tight loop.
             logger.warning(f"[input] action {action} failed: {exc}")
             status = "dropped"
+
+        await self._broadcast_named_event(
+            "level", {"level": level, "status": status}
+        )
 
         body = json.dumps({"status": status, "level": level}).encode()
         await self._send_response(writer, 200, "application/json", body)

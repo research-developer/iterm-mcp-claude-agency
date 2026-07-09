@@ -92,6 +92,7 @@
     placeholder.style.display = "none";
     questionCard.classList.add("visible");
     waitingIndicator.classList.remove("visible");
+    setBaseLevel("tiles");
 
     // Focus first tile for keyboard nav
     const firstTile = optionsGrid.querySelector(".option-tile");
@@ -105,6 +106,7 @@
     customArea.classList.remove("visible");
     waitingIndicator.classList.remove("visible");
     placeholder.style.display = "";
+    setBaseLevel("tui");
   }
 
   function handleTileClick(opt) {
@@ -294,9 +296,26 @@
     }, 3000);
   }
 
-  function showLevel(level) {
+  let baseLevel = "tui";          // what the wheel drives when idle
+  let levelFlashTimer = null;
+
+  function renderLevel(level) {
     levelIndicator.textContent = level;
     levelIndicator.classList.add("visible");
+  }
+
+  function setBaseLevel(level) {
+    baseLevel = level;
+    if (levelFlashTimer === null) renderLevel(baseLevel);
+  }
+
+  function flashLevel(level) {
+    renderLevel(level);
+    if (levelFlashTimer !== null) clearTimeout(levelFlashTimer);
+    levelFlashTimer = setTimeout(function () {
+      levelFlashTimer = null;
+      renderLevel(baseLevel);
+    }, 4000);
   }
 
   // ── SSE connection ───────────────────────────────────────────────────────
@@ -312,6 +331,7 @@
     evtSource.onopen = function () {
       setStatus("connected", "Connected");
       reconnectDelay = 1000;
+      renderLevel(baseLevel);
     };
 
     evtSource.onerror = function () {
@@ -354,7 +374,7 @@
       } catch (err) {
         return;
       }
-      showLevel(data.level || "tiles");
+      flashLevel(data.level || "tiles");
       applyGamepadAction(data.action);
     });
 
@@ -367,6 +387,17 @@
         return;
       }
       if (data.message) showToast(data.message);
+    });
+
+    // Named event: the routing level resolved for a remote action.
+    evtSource.addEventListener("level", function (e) {
+      let data;
+      try {
+        data = JSON.parse(e.data);
+      } catch (err) {
+        return;
+      }
+      if (data.level) flashLevel(data.level);
     });
 
     // Unnamed data events (existing dashboard state broadcasts) — ignored
