@@ -870,10 +870,16 @@ class DashboardServer:
             return
 
         action = data.get("action")
-        modifier = bool(data.get("modifier", False))
-        if action not in self.INPUT_ACTIONS:
+        modifier = data.get("modifier", False)
+        if not isinstance(action, str) or action not in self.INPUT_ACTIONS:
             body = json.dumps(
                 {"error": f"action must be one of {sorted(self.INPUT_ACTIONS)}"}
+            ).encode()
+            await self._send_response(writer, 400, "application/json", body)
+            return
+        if not isinstance(modifier, bool):
+            body = json.dumps(
+                {"error": "modifier must be a JSON boolean"}
             ).encode()
             await self._send_response(writer, 400, "application/json", body)
             return

@@ -103,6 +103,18 @@ class TestValidation(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(writer.status, 400)
 
+    async def test_non_string_action_400(self):
+        """An unhashable action (e.g. a list) must 400, not TypeError."""
+        server = make_server()
+        writer = await call(server, {"action": ["select"], "modifier": False})
+        self.assertEqual(writer.status, 400)
+
+    async def test_non_boolean_modifier_400(self):
+        """A non-boolean modifier (e.g. "false") must 400, not misroute."""
+        server = make_server()
+        writer = await call(server, {"action": "select", "modifier": "false"})
+        self.assertEqual(writer.status, 400)
+
     async def test_oversize_body_413(self):
         """Content-Length beyond MAX_BODY_SIZE is rejected before any read."""
         server = make_server()

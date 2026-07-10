@@ -140,20 +140,20 @@ def post_action(url: str, payload: dict, timeout: float = 2.0) -> bool:
         timeout: Socket timeout in seconds.
 
     Returns:
-        True on HTTP 2xx, False on any error (connection refused,
-        timeout, non-2xx, etc.).
+        True on HTTP 2xx, False on any error (unserializable payload,
+        connection refused, timeout, non-2xx, etc.).
     """
-    body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         with urllib.request.urlopen(request, timeout=timeout) as resp:
             return 200 <= resp.status < 300
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (urllib.error.URLError, OSError, ValueError, TypeError) as exc:
         logger.debug("post_action failed: %s", exc)
         return False
 

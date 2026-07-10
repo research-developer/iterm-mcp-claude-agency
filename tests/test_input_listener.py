@@ -230,12 +230,31 @@ class TestPostAction(unittest.TestCase):
     """post_action never raises; returns False when the daemon is down."""
 
     def test_unreachable_url_returns_false(self):
+        import socket
+
         from core.input_listener import post_action
 
-        # Port 1 on localhost is never listening.
+        # Bind an ephemeral port without listening: connections to it are
+        # deterministically refused while we hold the socket open.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        try:
+            ok = post_action(
+                "http://127.0.0.1:%d/api/input" % port,
+                {"action": "select", "modifier": False},
+                timeout=0.5,
+            )
+        finally:
+            sock.close()
+        self.assertFalse(ok)
+
+    def test_unserializable_payload_returns_false(self):
+        from core.input_listener import post_action
+
         ok = post_action(
-            "http://127.0.0.1:1/api/input",
-            {"action": "select", "modifier": False},
+            "http://127.0.0.1:9999/api/input",
+            {"action": object()},  # json.dumps raises TypeError
             timeout=0.2,
         )
         self.assertFalse(ok)

@@ -128,6 +128,20 @@ class TestCycleWindow(unittest.IsolatedAsyncioTestCase):
         terminal = make_terminal(app)
         self.assertFalse(await terminal.cycle_window(1))
 
+    async def test_current_window_not_in_list_returns_false(self):
+        s = fake_session("s1")
+        w1 = fake_window("w1", [s])
+        w2 = fake_window("w2", [s])
+        orphan = fake_window("w9", [s])  # current, but absent from windows
+        app = SimpleNamespace(current_window=orphan, windows=[w1, w2])
+        terminal = make_terminal(app)
+
+        ok = await terminal.cycle_window(1)
+
+        self.assertFalse(ok)
+        w1.async_activate.assert_not_awaited()
+        w2.async_activate.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -596,7 +596,8 @@ class ItermTerminal:
 
         Returns:
             True if a window is active after the call (including the
-            single-window no-op), False if there are no windows.
+            single-window no-op), False if there are no windows or the
+            current window is not in the window list.
         """
         if not self.app:
             return False
@@ -606,11 +607,13 @@ class ItermTerminal:
             return False
         if len(windows) == 1:
             return True
-        index = 0
+        index = None
         for i, window in enumerate(windows):
             if window.window_id == current.window_id:
                 index = i
                 break
+        if index is None:
+            return False
         target = windows[(index + delta) % len(windows)]
         await target.async_activate()
         return True
