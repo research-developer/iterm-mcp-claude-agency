@@ -184,6 +184,103 @@
     if (tile) tile.click();
   });
 
+  // ── Gamepad navigation (D-pad/stick nav, A = select, B = cancel) ─────────
+  //
+  // Mapping logic lives in /gamepad.js (window.GamepadNav) so it stays
+  // pure and testable; this section owns the requestAnimationFrame poll
+  // loop and translates actions onto the tile focus used by keyboard nav.
+
+  const gamepadMappers = {}; // pad.index → per-pad edge-detection state
+  let gamepadLoopActive = false;
+
+  function visibleTiles() {
+    return Array.prototype.slice.call(
+      optionsGrid.querySelectorAll(".option-tile")
+    );
+  }
+
+  function moveTileFocus(delta) {
+    const tiles = visibleTiles();
+    if (!tiles.length) return;
+    const idx = tiles.indexOf(document.activeElement);
+    if (idx === -1) {
+      tiles[0].focus();
+      return;
+    }
+    tiles[(idx + delta + tiles.length) % tiles.length].focus();
+  }
+
+  function applyGamepadAction(action) {
+    if (!currentQuestion) return;
+    const customVisible = customArea.classList.contains("visible");
+
+    if (action === "cancel") {
+      if (customVisible) {
+        customArea.classList.remove("visible");
+        customInput.value = "";
+        const tiles = visibleTiles();
+        if (tiles.length) tiles[0].focus();
+      }
+      return;
+    }
+    if (customVisible) return; // typing a custom answer — ignore nav/select
+
+    if (action === "move_prev") {
+      moveTileFocus(-1);
+    } else if (action === "move_next") {
+      moveTileFocus(1);
+    } else if (action === "select") {
+      const tiles = visibleTiles();
+      const idx = tiles.indexOf(document.activeElement);
+      const tile = idx !== -1 ? tiles[idx] : tiles[0];
+      if (tile) tile.click();
+    }
+  }
+
+  function pollGamepads() {
+    const pads = navigator.getGamepads();
+    let anyConnected = false;
+    for (let i = 0; i < pads.length; i++) {
+      const pad = pads[i];
+      if (!pad || !pad.connected) continue;
+      anyConnected = true;
+      if (!gamepadMappers[pad.index]) {
+        gamepadMappers[pad.index] = GamepadNav.createMapper();
+      }
+      GamepadNav.pollPad(gamepadMappers[pad.index], pad).forEach(
+        applyGamepadAction
+      );
+    }
+    if (anyConnected) {
+      requestAnimationFrame(pollGamepads);
+    } else {
+      gamepadLoopActive = false; // resumes on the next gamepadconnected
+    }
+  }
+
+  function startGamepadLoop() {
+    if (gamepadLoopActive) return;
+    gamepadLoopActive = true;
+    requestAnimationFrame(pollGamepads);
+  }
+
+  if (
+    typeof window.GamepadNav !== "undefined" &&
+    typeof navigator.getGamepads === "function"
+  ) {
+    window.addEventListener("gamepadconnected", function (e) {
+      showToast("Gamepad connected: " + (e.gamepad ? e.gamepad.id : "pad"));
+      startGamepadLoop();
+    });
+    window.addEventListener("gamepaddisconnected", function (e) {
+      if (e.gamepad) delete gamepadMappers[e.gamepad.index];
+      showToast("Gamepad disconnected: " + (e.gamepad ? e.gamepad.id : "pad"));
+    });
+    // A pad may already be connected on load; probe once — the loop
+    // stops itself immediately if nothing is plugged in.
+    startGamepadLoop();
+  }
+
   // ── Toast notifications ──────────────────────────────────────────────────
 
   function showToast(msg, isError) {

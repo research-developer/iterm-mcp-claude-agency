@@ -17,6 +17,7 @@ Typical lifecycle
 """
 
 import asyncio
+import math
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -34,7 +35,6 @@ class Action(Enum):
     These map to tile navigation and selection, independent of the physical
     input device (mouse, keyboard, gamepad, voice).
 
-    TODO: implement GamepadController (buttons → MOVE_PREV/MOVE_NEXT/SELECT)
     TODO: implement DictationController (speech tokens → Action)
     """
 
@@ -61,6 +61,93 @@ class Controller(Protocol):
     def handle_event(self, event: dict) -> Optional[Action]:
         """Map a device event to an Action, or return None."""
         ...
+
+
+class GamepadController:
+    """Map standard-mapping gamepad events to Actions with edge detection.
+
+    Mirrors the browser-side logic in static/gamepad.js so the mapping is
+    testable headlessly. Event dicts are the shape the browser polling loop
+    emits per button/axis sample:
+
+        {"type": "button", "index": int, "pressed": bool}
+        {"type": "axis", "index": int, "value": float}
+
+    Buttons use rising-edge detection: a held button fires once and must be
+    released before it can fire again. The left-stick Y axis uses hysteresis
+    (press at |value| >= 0.6, re-arm below 0.3) so a slowly-returning stick
+    does not double-fire.
+    """
+
+    # Standard Gamepad API mapping (https://w3.org/TR/gamepad/#remapping)
+    BUTTON_ACTIONS = {
+        0: Action.SELECT,      # A / cross
+        1: Action.CANCEL,      # B / circle
+        12: Action.MOVE_PREV,  # D-pad up
+        13: Action.MOVE_NEXT,  # D-pad down
+    }
+    STICK_AXIS = 1             # left stick Y
+    AXIS_PRESS_THRESHOLD = 0.6
+    AXIS_RELEASE_THRESHOLD = 0.3
+
+    def __init__(self) -> None:
+        self._pressed_buttons: set = set()
+        self._axis_direction: int = 0  # -1 (up), 0 (neutral), +1 (down)
+
+    def handle_event(self, event: dict) -> Optional[Action]:
+        """Map a gamepad event to an Action, or return None.
+
+        Args:
+            event: Button or axis event dict (see class docstring).
+
+        Returns:
+            The mapped Action on a rising edge, or None for holds,
+            releases, unmapped inputs, and malformed events.
+        """
+        if not isinstance(event, dict):
+            return None
+        event_type = event.get("type")
+        if event_type == "button":
+            return self._handle_button(event)
+        if event_type == "axis":
+            return self._handle_axis(event)
+        return None
+
+    def _handle_button(self, event: dict) -> Optional[Action]:
+        index = event.get("index")
+        if not isinstance(index, int):
+            return None
+        if not event.get("pressed"):
+            self._pressed_buttons.discard(index)
+            return None
+        if index in self._pressed_buttons:
+            return None  # held — already fired on the rising edge
+        self._pressed_buttons.add(index)
+        return self.BUTTON_ACTIONS.get(index)
+
+    def _handle_axis(self, event: dict) -> Optional[Action]:
+        if event.get("index") != self.STICK_AXIS:
+            return None
+        value = event.get("value")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return None
+        if math.isnan(value):
+            return None  # mirror the JS mapper's isNaN guard
+        direction = 0
+        if value <= -self.AXIS_PRESS_THRESHOLD:
+            direction = -1
+        elif value >= self.AXIS_PRESS_THRESHOLD:
+            direction = 1
+        elif abs(value) >= self.AXIS_RELEASE_THRESHOLD:
+            direction = self._axis_direction  # hysteresis band: hold state
+        if direction == self._axis_direction:
+            return None
+        self._axis_direction = direction
+        if direction == -1:
+            return Action.MOVE_PREV
+        if direction == 1:
+            return Action.MOVE_NEXT
+        return None  # returned to neutral
 
 
 # ---------------------------------------------------------------------------
