@@ -541,7 +541,83 @@ class ItermTerminal:
         
         # Focus the session
         await session.session.async_activate()
-        
+
+    async def get_active_session(self) -> Optional["ItermSession"]:
+        """Return the wrapper for iTerm's currently focused session.
+
+        Returns:
+            The ItermSession for the active pane, or None if there is
+            no app connection, window, tab, or matching session.
+        """
+        if not self.app:
+            return None
+        window = self.app.current_window
+        if not window or not window.current_tab:
+            return None
+        raw = window.current_tab.current_session
+        if raw is None:
+            return None
+        return await self.get_session_by_id(raw.session_id)
+
+    async def focus_relative_pane(self, delta: int) -> bool:
+        """Move focus to the previous/next pane in the current window.
+
+        Args:
+            delta: -1 for previous, +1 for next (wraps around).
+
+        Returns:
+            True if focus is valid after the call (including the
+            single-pane no-op), False if there is no window/tab/panes.
+        """
+        if not self.app:
+            return False
+        window = self.app.current_window
+        if not window or not window.current_tab:
+            return False
+        sessions = window.current_tab.sessions
+        current = window.current_tab.current_session
+        if not sessions or current is None:
+            return False
+        if len(sessions) == 1:
+            return True
+        try:
+            index = sessions.index(current)
+        except ValueError:
+            return False
+        target = sessions[(index + delta) % len(sessions)]
+        await target.async_activate()
+        return True
+
+    async def cycle_window(self, delta: int = 1) -> bool:
+        """Activate the previous/next iTerm window, round-robin.
+
+        Args:
+            delta: -1 for previous, +1 for next (wraps around).
+
+        Returns:
+            True if a window is active after the call (including the
+            single-window no-op), False if there are no windows or the
+            current window is not in the window list.
+        """
+        if not self.app:
+            return False
+        windows = self.app.windows
+        current = self.app.current_window
+        if not windows or current is None:
+            return False
+        if len(windows) == 1:
+            return True
+        index = None
+        for i, window in enumerate(windows):
+            if window.window_id == current.window_id:
+                index = i
+                break
+        if index is None:
+            return False
+        target = windows[(index + delta) % len(windows)]
+        await target.async_activate()
+        return True
+
     async def close_session(self, session_id: str) -> None:
         """Close a specific session.
         
