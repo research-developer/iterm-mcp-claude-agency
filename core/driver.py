@@ -17,6 +17,7 @@ Typical lifecycle
 """
 
 import asyncio
+import math
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -103,6 +104,8 @@ class GamepadController:
             The mapped Action on a rising edge, or None for holds,
             releases, unmapped inputs, and malformed events.
         """
+        if not isinstance(event, dict):
+            return None
         event_type = event.get("type")
         if event_type == "button":
             return self._handle_button(event)
@@ -128,6 +131,8 @@ class GamepadController:
         value = event.get("value")
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             return None
+        if math.isnan(value):
+            return None  # mirror the JS mapper's isNaN guard
         direction = 0
         if value <= -self.AXIS_PRESS_THRESHOLD:
             direction = -1

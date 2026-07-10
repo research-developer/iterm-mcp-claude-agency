@@ -176,6 +176,23 @@ class TestGamepadMalformedEvents(unittest.TestCase):
             )
         )
 
+    def test_non_dict_event(self):
+        self.assertIsNone(self.controller.handle_event(None))
+        self.assertIsNone(self.controller.handle_event("button"))
+        self.assertIsNone(self.controller.handle_event([1, 2, 3]))
+
+    def test_nan_axis_value_ignored(self):
+        # NaN must not reset the axis state and re-arm the stick
+        # (mirrors the JS mapper's isNaN guard).
+        self.assertEqual(
+            self.controller.handle_event(axis(1, 0.9)), Action.MOVE_NEXT
+        )
+        self.assertIsNone(
+            self.controller.handle_event(axis(1, float("nan")))
+        )
+        # Still held: a repeated deflection must not fire again.
+        self.assertIsNone(self.controller.handle_event(axis(1, 0.9)))
+
 
 class TestGamepadControllerProtocol(unittest.TestCase):
     """GamepadController satisfies the Controller protocol."""

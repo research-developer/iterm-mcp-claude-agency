@@ -13,10 +13,29 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 JS_TEST_FILE = os.path.join(PROJECT_ROOT, "tests", "js", "test_gamepad.mjs")
 
 
+def _node_supports_test_runner() -> bool:
+    """Return True if a node with the built-in test runner (18+) is on PATH."""
+    if shutil.which("node") is None:
+        return False
+    try:
+        version = subprocess.run(
+            ["node", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+        major = int(version.lstrip("v").split(".", 1)[0])
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    return major >= 18
+
+
 class TestGamepadJavaScript(unittest.TestCase):
     """The browser-side mapper in static/gamepad.js passes its node tests."""
 
-    @unittest.skipIf(shutil.which("node") is None, "node is not installed")
+    @unittest.skipUnless(
+        _node_supports_test_runner(), "node 18+ (built-in test runner) not available"
+    )
     def test_node_gamepad_suite_passes(self):
         result = subprocess.run(
             ["node", "--test", JS_TEST_FILE],
