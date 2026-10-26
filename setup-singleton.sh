@@ -11,7 +11,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON_URL="http://127.0.0.1:12345/mcp"
-SERVER_NAME="iTerm"
+# One user-scope entry serves every project; per-project copies just multiply.
+SERVER_NAME="iterm"
 
 # Colors
 GREEN='\033[0;32m'
@@ -71,9 +72,9 @@ echo ""
 
 # Step 4: Add HTTP-based config
 echo -e "${GREEN}[4/4]${NC} Adding HTTP-based MCP config..."
-claude mcp add --transport http "${SERVER_NAME}" "${DAEMON_URL}" 2>/dev/null || {
+claude mcp add --scope user --transport http "${SERVER_NAME}" "${DAEMON_URL}" 2>/dev/null || {
     echo -e "  ${YELLOW}⚠${NC} Config may already exist or command failed"
-    echo "  Try manually: claude mcp add --transport http ${SERVER_NAME} ${DAEMON_URL}"
+    echo "  Try manually: claude mcp add --scope user --transport http ${SERVER_NAME} ${DAEMON_URL}"
 }
 echo ""
 
@@ -103,6 +104,8 @@ echo -e "${YELLOW}To revert to stdio mode:${NC}"
 echo "  1. Stop the daemon:"
 echo "     launchctl bootout gui/\$(id -u) ~/Library/LaunchAgents/com.iterm-mcp.daemon.plist"
 echo "  2. Remove HTTP config:"
-echo "     claude mcp remove ${SERVER_NAME}"
-echo "  3. Re-add with stdio transport:"
-echo "     claude mcp add ${SERVER_NAME} -- python -m server.main"
+echo "     claude mcp remove ${SERVER_NAME} -s user"
+echo "  3. Re-add with stdio transport (spawns a shim per session):"
+echo "     claude mcp add --scope user ${SERVER_NAME} -- ${SCRIPT_DIR}/.venv/bin/python -m iterm_mcpy"
+echo ""
+echo "Full guide: ${SCRIPT_DIR}/docs/RUNNING.md"

@@ -15,7 +15,9 @@ dependencies = [
     "iterm2>=2.7",
     "pyzmq>=25.0.0",
     "pyyaml>=6.0",
-    "mcp>=1.8.0",
+    # mcp 2.x removed mcp.server.fastmcp (renamed MCPServer); the daemon
+    # crashes on import under 2.x. Lift the cap only after porting.
+    "mcp>=1.8.0,<2",
     "anyio>=4.0",
 ]
 

@@ -5,12 +5,19 @@
     <key>Label</key>
     <string>com.iterm-mcp.daemon</string>
 
+    <!--
+      Run the daemon itself, never the shim (run_server.py / bare
+      `iterm-mcp`). The shim spawns a detached daemon launchd cannot track,
+      so a crash-looping shim leaks one daemon per respawn. An explicit
+      port disables the 12340-12349 fallback: if 12345 is taken the daemon
+      fails loudly instead of starting a second copy elsewhere.
+    -->
     <key>ProgramArguments</key>
     <array>
         <string>__PYTHON_PATH__</string>
-        <string>__SCRIPT_DIR__/run_server.py</string>
-        <string>--transport</string>
-        <string>streamable-http</string>
+        <string>-m</string>
+        <string>iterm_mcpy</string>
+        <string>daemon</string>
         <string>--host</string>
         <string>127.0.0.1</string>
         <string>--port</string>
@@ -23,11 +30,19 @@
     <key>RunAtLoad</key>
     <true/>
 
+    <!--
+      Restart on crash only. A clean exit (SIGTERM from `iterm-mcp stop`)
+      stays down; use `launchctl kickstart -k` to restart.
+    -->
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
         <false/>
     </dict>
+
+    <!-- Back off between crash restarts so a broken env doesn't flood the log. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
 
     <key>StandardOutPath</key>
     <string>__LOG_DIR__/daemon.log</string>

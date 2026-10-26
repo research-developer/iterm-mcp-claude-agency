@@ -13,9 +13,12 @@ PLIST_TEMPLATE="${SCRIPT_DIR}/${PLIST_NAME}.template"
 PLIST_DST="${HOME}/Library/LaunchAgents/${PLIST_NAME}"
 LOG_DIR="${HOME}/.iterm-mcp"
 
-# Auto-detect Python interpreter
+# Auto-detect Python interpreter. Prefer the repo's dedicated venv so
+# unrelated installs into a shared env can't break the daemon.
 if [[ -n "${ITERM_MCP_PYTHON}" ]]; then
     PYTHON_PATH="${ITERM_MCP_PYTHON}"
+elif [[ -x "${SCRIPT_DIR}/.venv/bin/python" ]]; then
+    PYTHON_PATH="${SCRIPT_DIR}/.venv/bin/python"
 elif command -v python3 &>/dev/null; then
     PYTHON_PATH="$(command -v python3)"
 else
@@ -37,6 +40,18 @@ if [[ ! -x "${PYTHON_PATH}" ]]; then
     echo "Set ITERM_MCP_PYTHON environment variable to specify the Python path."
     exit 1
 fi
+
+# Refuse to install an interpreter that can't load the server; launchd
+# would otherwise crash-loop it forever.
+PREFLIGHT_LOG="$(mktemp)"
+if ! (cd "${SCRIPT_DIR}" && "${PYTHON_PATH}" -c "import iterm_mcpy.fastmcp_server") 2>"${PREFLIGHT_LOG}"; then
+    echo -e "${RED}Error: ${PYTHON_PATH} cannot import the server:${NC}"
+    tail -3 "${PREFLIGHT_LOG}"
+    rm -f "${PREFLIGHT_LOG}"
+    echo "Create the venv first:  python3 -m venv .venv && .venv/bin/pip install -e ."
+    exit 1
+fi
+rm -f "${PREFLIGHT_LOG}"
 
 # Create log directory
 mkdir -p "${LOG_DIR}"
@@ -73,10 +88,12 @@ if launchctl list 2>/dev/null | grep -q "com.iterm-mcp.daemon"; then
     echo "Daemon endpoint: http://127.0.0.1:12345/mcp"
     echo "Logs: ${LOG_DIR}/daemon.log"
     echo ""
-    echo "To check status:  launchctl list | grep iterm-mcp"
+    echo "To check status:  ${PYTHON_BIN_DIR}/iterm-mcp status"
+    echo "To restart:       launchctl kickstart -k gui/\$(id -u)/com.iterm-mcp.daemon"
     echo "To stop:          launchctl unload ${PLIST_DST}"
     echo "To start:         launchctl load ${PLIST_DST}"
     echo "To uninstall:     launchctl unload ${PLIST_DST} && rm ${PLIST_DST}"
+    echo "Docs:             ${SCRIPT_DIR}/docs/RUNNING.md"
 else
     echo -e "${YELLOW}Service installed but may not be running. Check logs:${NC}"
     echo "  tail -f ${LOG_DIR}/daemon.log"
