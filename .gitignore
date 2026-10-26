@@ -93,3 +93,6 @@ com.iterm-mcp.daemon.plist
 
 # Local iTerm configuration
 .iterm/
+
+# Dedicated daemon virtualenv (see docs/RUNNING.md)
+.venv/
